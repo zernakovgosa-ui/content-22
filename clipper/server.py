@@ -396,6 +396,14 @@ def _process_video(item: Dict[str, Any]) -> None:
             ]]}
             _send_video_retry(token, chat, Path(c["path"]), cap, kb)
     item["clips"] = len(clips_out)
+    # Авто-очистка: исходник уже нарезан — удаляем (диск маленький, клипы лежат
+    # отдельно в output/jobs/). С YouTube перекачаем при надобности.
+    if clips_out:
+        try:
+            src.unlink(missing_ok=True)
+            print(f"[clipper] исходник удалён после нарезки: {src.name}", flush=True)
+        except Exception as e:
+            print(f"[clipper] не смог удалить исходник: {str(e)[:80]}", flush=True)
 
 
 def _worker_loop() -> None:
