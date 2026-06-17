@@ -24,6 +24,7 @@ import shutil
 import sys
 import threading
 import time
+import urllib.parse
 import uuid
 from datetime import date, datetime
 from pathlib import Path
@@ -1309,6 +1310,37 @@ def yt_auth_callback(state: str = "", code: str = "", error: str = ""):
         "<div style='font:16px/1.6 Segoe UI;max-width:480px;margin:80px auto;text-align:center'>"
         f"<h2>✅ Канал «{acc['name']}» подключен</h2>"
         "<p>Автопубликация включена. Эту вкладку можно закрыть.</p></div>")
+
+
+class YtManualIn(BaseModel):
+    id: str
+    paste: str
+
+
+@app.post("/auth/yt/manual")
+def yt_auth_manual(body: YtManualIn):
+    """Ручное подключение YouTube для серверного деплоя: Google редиректит на
+    localhost (недоступен с сервера), поэтому владелец копирует адрес из строки
+    браузера и вставляет сюда — достаём ?code= и меняем на refresh_token."""
+    st = _load_state()
+    acc = next((a for a in st["accounts"] if a["id"] == body.id), None)
+    if not acc or not acc.get("yt"):
+        return JSONResponse({"error": "аккаунт не найден"}, status_code=404)
+    raw = body.paste or ""
+    m = re.search(r"[?&]code=([^&\s]+)", raw)
+    code = urllib.parse.unquote(m.group(1) if m else raw.strip())
+    if not code:
+        return JSONResponse({"error": "не нашёл код — вставь адрес целиком"}, status_code=400)
+    try:
+        tokens = yt.exchange_code(acc["yt"]["client_id"], acc["yt"]["client_secret"],
+                                  code, YT_REDIRECT)
+    except Exception as e:
+        return JSONResponse({"error": f"обмен кода не удался: {str(e)[:200]}"}, status_code=500)
+    with _LOCK:
+        acc["yt"]["refresh_token"] = tokens["refresh_token"]
+        _save_state()
+    _notify(f"🔗 YouTube подключен: «{acc['name']}» — автопостинг активен.")
+    return {"ok": True}
 
 
 @app.post("/tg/test")

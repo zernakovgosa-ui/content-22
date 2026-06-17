@@ -252,7 +252,7 @@ function render(){
         ? '<span class="pill ok">🤖 YouTube авто</span>'
         : `<span class="pill warn">YouTube не подключен</span>
            <button class="ghost" style="padding:3px 10px;margin-left:6px"
-                   onclick="window.open('/auth/yt/start?id=${a.id}','_blank')">🔗 Подключить</button>`;
+                   onclick="ytConnect('${a.id}')">🔗 Подключить</button>`;
     } else {
       plat = '<span class="pill">✋ вручную</span>';
     }
@@ -346,6 +346,17 @@ async function saveCpm(){
   try{ await api('/config', {clips_per_10min:v}); $('cpm').value=v; }catch(e){ alert('Не сохранилось'); }
 }
 
+async function ytConnect(id){
+  window.open('/auth/yt/start?id='+id,'_blank');
+  const paste = prompt('Войди в Google ЭТОГО канала.\nGoogle перекинет на адрес localhost:8002 — страница НЕ откроется, это нормально.\nСкопируй ВЕСЬ адрес из адресной строки и вставь сюда:');
+  if(!paste) return;
+  try{
+    const r = await api('/auth/yt/manual', {id, paste});
+    alert(r && r.ok ? '✅ Канал подключён, автопостинг активен!' : ('❌ '+((r&&r.error)||'не вышло')));
+  }catch(e){ alert('❌ ошибка: '+e); }
+  refresh();
+}
+
 async function startCat(cat){
   const files=[...document.querySelectorAll(`input[data-cat="${cat}"]:checked:not(:disabled)`)].map(i=>i.dataset.f);
   if(!files.length) return alert('Отметь файлы галочками');
@@ -365,7 +376,7 @@ async function addAcc(){
   $('acc-name').value='';
   if(platform==='youtube' && r.id){
     if(confirm('Аккаунт добавлен. Подключить YouTube сейчас? (войди в Google этого канала)'))
-      window.open('/auth/yt/start?id='+r.id,'_blank');
+      ytConnect(r.id);
   }
   refresh();
 }

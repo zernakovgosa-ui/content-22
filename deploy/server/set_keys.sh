@@ -16,7 +16,9 @@ echo " Значения бери из своего локального файл
 echo "================================================================"
 read -rp "Telegram bot token        : " TG_TOKEN
 read -rp "Telegram chat id          : " TG_CHAT
-read -rp "Groq API key              : " GROQ
+echo "Groq: можно вставить СРАЗУ НЕСКОЛЬКО ключей через пробел или запятую"
+echo "(пул ротируется при лимитах бесплатного Groq — чем больше, тем лучше)."
+read -rp "Groq API keys             : " GROQ
 read -rp "Pexels API key (необяз.)  : " PEXELS
 
 TG_TOKEN="$TG_TOKEN" TG_CHAT="$TG_CHAT" GROQ="$GROQ" PEXELS="$PEXELS" \
@@ -33,8 +35,11 @@ def setk(key, env):
         d[key] = v
 setk("telegram_bot_token", "TG_TOKEN")
 setk("telegram_chat_id",   "TG_CHAT")
-setk("groq_api_key",       "GROQ")
 setk("pexels_api_key",     "PEXELS")
+groq_raw = (os.environ.get("GROQ") or "").replace(",", " ").split()
+if groq_raw:
+    d["groq_api_keys"] = groq_raw       # пул для ротации при лимитах Groq
+    d["groq_api_key"] = groq_raw[0]     # запасной + для выбора провайдера
 json.dump(d, open(p, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
 print("✅ ключи записаны в settings.json")
 PY
