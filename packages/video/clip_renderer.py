@@ -635,10 +635,63 @@ def _write_srt(caps: List[Dict], path: Path) -> None:
 # через все) — рендер полз. Теперь субтитры — одна «слайд-лента» PNG с точными
 # длительностями, наложенная ОДНИМ overlay; промежуточных файлов нет вообще.
 # ----------------------------------------------------------------------------
+def _txt_size(draw, txt: str, font) -> Tuple[int, int]:
+    l, t, r, b = draw.textbbox((0, 0), txt, font=font)
+    return r - l, b - t
+
+
+def _build_cta_overlays(workdir: Path) -> Tuple[Optional[Path], Optional[Path]]:
+    """TREZZY-плашки (прозрачные PNG на весь кадр 1080x1920):
+      • постоянная — сверху, ненавязчиво («магазин в профиле»);
+      • всплывашка — крупнее, в середине ролика («ПАРФЮМ & КОСМЕТИКА / trezzy.ru»).
+    Кремово-тёмный стиль, без эмодзи (шрифт может их не знать). None при сбое.
+    """
+    CREAM = (212, 175, 120, 255)
+    INK = (20, 18, 16, 190)
+    TXT = (245, 240, 230, 240)
+    try:
+        # — постоянная плашка сверху —
+        pers = Image.new("RGBA", (WIDTH, HEIGHT), (0, 0, 0, 0))
+        d = ImageDraw.Draw(pers)
+        f = _load_font(40)
+        s = "trezzy.ru  ·  магазин в профиле"
+        tw, th = _txt_size(d, s, f)
+        px, py = 34, 18
+        bw, bh = tw + px * 2, th + py * 2
+        bx, by = (WIDTH - bw) // 2, 70
+        d.rounded_rectangle((bx, by, bx + bw, by + bh), radius=bh // 2, fill=INK)
+        d.text((bx + px, by + py), s, font=f, fill=TXT)
+        d.rectangle((bx, by, bx + 6, by + bh), fill=CREAM)
+        p_path = workdir / "cta_top.png"
+        pers.save(p_path)
+
+        # — всплывашка в середине —
+        mid = Image.new("RGBA", (WIDTH, HEIGHT), (0, 0, 0, 0))
+        dm = ImageDraw.Draw(mid)
+        fb = _load_font(76)
+        fm = _load_font(58)
+        l1, l2 = "ПАРФЮМ & КОСМЕТИКА", "trezzy.ru"
+        w1, h1 = _txt_size(dm, l1, fb)
+        w2, h2 = _txt_size(dm, l2, fm)
+        cw = max(w1, w2) + 90
+        chh = h1 + h2 + 70
+        cx, cy = (WIDTH - cw) // 2, int(HEIGHT * 0.52)
+        dm.rounded_rectangle((cx, cy, cx + cw, cy + chh), radius=30, fill=(20, 18, 16, 210))
+        dm.rectangle((cx, cy, cx + cw, cy + 7), fill=CREAM)
+        dm.text(((WIDTH - w1) // 2, cy + 30), l1, font=fb, fill=TXT)
+        dm.text(((WIDTH - w2) // 2, cy + 30 + h1 + 16), l2, font=fm, fill=CREAM)
+        m_path = workdir / "cta_mid.png"
+        mid.save(m_path)
+        return p_path, m_path
+    except Exception as e:
+        print("[clip] CTA overlay build failed:", str(e)[:150])
+        return None, None
+
+
 def _render_one_clip(
     ffmpeg: str, src: Path, start: float, dur: float, caps: List[Dict],
     framing: Dict[str, Any], workdir: Path, out_path: Path,
-    q: Dict[str, str], hook_title: str = "",
+    q: Dict[str, str], hook_title: str = "", cta: bool = False,
 ) -> bool:
     cw, ch, cx, cy = framing["fill"]
 
@@ -654,8 +707,20 @@ def _render_one_clip(
     # Лента субтитров (если есть) — вторым входом через concat-демаксер. БЕЗ seek:
     # её таймлайн уже clip-relative (0 = начало клипа).
     track = _build_caption_track(caps, dur, workdir) if caps else None
+    track_idx = None
+    nin = 1
     if track is not None:
         cmd += ["-f", "concat", "-safe", "0", "-i", str(track)]
+        track_idx = nin
+        nin += 1
+    # TREZZY-плашки: прозрачные PNG на весь кадр → overlay=0:0. Только для trezzy.
+    p_idx = m_idx = None
+    if cta:
+        cta_p, cta_m = _build_cta_overlays(workdir)
+        if cta_p is not None:
+            cmd += ["-i", str(cta_p)]; p_idx = nin; nin += 1
+        if cta_m is not None:
+            cmd += ["-i", str(cta_m)]; m_idx = nin; nin += 1
 
     # Качество апскейла: лёгкий денойз ДО scale (на малом кропе почти бесплатен,
     # чтобы lanczos+cas не усиливали зерно), полные chroma-флаги у swscale,
@@ -680,21 +745,28 @@ def _render_one_clip(
         fc = (f"[0:v]crop={cw}:{ch}:{cx}:{cy},hqdn3d=1.5:1.5:6:6,"
               f"scale={WIDTH}:{HEIGHT}:flags={SCALE_FLAGS},cas={cas},setsar=1[vbase]")
 
-    if track is not None:
-        fc += f";[vbase][1:v]overlay=0:0:eof_action=pass[vout]"
-    else:
-        fc += f";[vbase]null[vout]"
-    cmd += ["-filter_complex", fc, "-map", "[vout]", "-map", "0:a?",
+    cur = "[vbase]"
+    if track_idx is not None:
+        fc += f";{cur}[{track_idx}:v]overlay=0:0:eof_action=pass[vsub]"; cur = "[vsub]"
+    if p_idx is not None:                       # постоянная плашка (весь клип)
+        fc += f";{cur}[{p_idx}:v]overlay=0:0[vper]"; cur = "[vper]"
+    if m_idx is not None:                       # всплывашка ~3.2с в середине
+        mid = dur / 2.0
+        m0 = max(0.0, mid - 1.6); m1 = min(dur, mid + 1.6)
+        fc += f";{cur}[{m_idx}:v]overlay=0:0:enable='between(t,{m0:.2f},{m1:.2f})'[vmid]"; cur = "[vmid]"
+    if cur == "[vbase]":
+        fc += ";[vbase]null[vout]"; cur = "[vout]"
+    cmd += ["-filter_complex", fc, "-map", cur, "-map", "0:a?",
             "-c:v", "libx264", "-pix_fmt", "yuv420p"] + enc_args + [
             "-c:a", "aac", "-b:a", q["abitrate"], "-t", f"{dur:.3f}",
             "-movflags", "+faststart", str(out_path)]
     ok, err = _run(cmd, timeout=1800)
-    if (not ok or not out_path.exists()) and track is not None:
-        # Аварийный путь: если лента чем-то не понравилась ffmpeg — рендерим без
-        # субтитров, клип важнее.
-        print("[clip] caption track failed, rendering without subs:", err[:200])
+    if (not ok or not out_path.exists()) and (track is not None or cta):
+        # Аварийный путь: если лента субтитров или CTA-плашки не понравились ffmpeg —
+        # рендерим голый клип без них, клип важнее.
+        print("[clip] overlay failed, rendering bare clip:", err[:200])
         return _render_one_clip(ffmpeg, src, start, dur, [], framing, workdir,
-                                out_path, q, hook_title="")
+                                out_path, q, hook_title="", cta=False)
     if not ok or not out_path.exists():
         print("[clip] render failed:", err)
         return False
@@ -737,6 +809,7 @@ def render_clips(
     latest_dir.mkdir(parents=True, exist_ok=True)
 
     hashtags = meta.get("hashtags") or []
+    cta_on = (meta.get("category") == "trezzy")   # CTA-плашки только для TREZZY
 
     def _do_moment(i: int, m: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         try:
@@ -777,7 +850,7 @@ def render_clips(
             # Хук-заголовок сверху отключён по решению владельца — лишний текст
             # в кадре не нужен, остаются только караоке-субтитры.
             if not _render_one_clip(ffmpeg, source_path, start, dur, caps, framing, workdir,
-                                    out_path, q, hook_title=""):
+                                    out_path, q, hook_title="", cta=cta_on):
                 return None
             if not _verify(ffmpeg, out_path):
                 print(f"[clip] clip {i} failed decode verification; skipping")

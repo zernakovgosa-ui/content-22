@@ -102,11 +102,19 @@ def buster_earnings(clips: Dict[str, Dict[str, Any]], plan: Sequence[Dict[str, A
     return {"total": total, "by_account": by_account, "rows": rows}
 
 
-def auto_clip_count(duration_s: Optional[float]) -> int:
-    """3 clips per 10 minutes of footage, never fewer than 3 (owner's rule)."""
+def auto_clip_count(duration_s: Optional[float], per_10min: int = 3) -> int:
+    """N клипов на 10 минут (per_10min, задаётся в дашборде), но не меньше per_10min.
+
+    Раньше «3 на 10 мин» было зашито жёстко; теперь владелец выбирает сам.
+    """
+    try:
+        per = int(per_10min)
+    except (TypeError, ValueError):
+        per = 3
+    per = max(1, min(per, 20))            # разумные рамки 1..20
     if not duration_s or duration_s <= 0:
-        return 3
-    return max(3, int(round(duration_s / 600.0 * 3)))
+        return per
+    return max(per, int(round(duration_s / 600.0 * per)))
 
 
 def distribute(clip_ids: Sequence[str], account_ids: Sequence[str],

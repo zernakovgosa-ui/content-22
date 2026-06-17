@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import os
+import random
 import re
 import shutil
 import sys
@@ -66,10 +67,13 @@ OUTPUT_DIR = CLIPPER_DIR / "output" / "jobs"
 SETTINGS_PATH = REPO / "data" / "settings.json"
 
 CATEGORIES = [("videos", "Видосы"), ("films", "Фильмы"), ("series", "Сериалы"),
-              ("buster", "Бустер")]
+              ("buster", "Бустер"), ("trezzy", "💎 TREZZY")]
 CAT_FOLDER = {"videos": "видосы", "films": "фильмы", "series": "сериалы",
-              "buster": "бустер"}
+              "buster": "бустер", "trezzy": "trezzy"}
 BUSTER_CAT = "buster"   # клип-программа стримера: своя мета, лимит аккаунтов, выплаты
+TREZZY_CAT = "trezzy"   # партнёрка парфюм/косметика → trezzy.ru (CTA на видео + в описании)
+TREZZY_SITE = "trezzy.ru"
+TREZZY_AFF = "https://trezzy.ru/?affiliate_code=lg-MNglW2-IrgVj01aGmp"
 VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v"}
 
 _LOCK = threading.RLock()
@@ -158,7 +162,15 @@ DEFAULT_TAGS = {
     "series": ["#shorts", "#сериал", "#моменты", "#лучшее"],
     "videos": ["#shorts", "#вирусное", "#моменты"],
     "buster": ["#buster", "#shorts", "#twitch", "#стрим", "#моменты"],
+    "trezzy": ["#trezzy", "#shorts"],
 }
+# Пул TREZZY-хештегов — на каждый клип берём РАЗНЫЙ, но СТАБИЛЬНЫЙ набор
+# (#trezzy + #shorts всегда). Парфюм/косметика/бьюти-тематика.
+TREZZY_HASHTAG_POOL = [
+    "#косметика", "#парфюм", "#парфюмерия", "#аромат", "#духи", "#нишеваяпарфюмерия",
+    "#бьюти", "#beauty", "#уходзакожей", "#макияж", "#красота", "#perfume",
+    "#fragrance", "#ароматы", "#парфюммания", "#обзор", "#люкс", "#тренд",
+]
 
 
 def _polish_meta(clip: Dict[str, Any]) -> Dict[str, Any]:
@@ -207,6 +219,16 @@ def _polish_meta(clip: Dict[str, Any]) -> Dict[str, Any]:
         # описание ведём с twitch-канала (как в примере правил программы)
         if chan.lower() not in desc.lower():
             desc = (f"📺 Стрим: {chan}\n\n" + desc).strip()
+
+    # TREZZY-вертикаль: парфюм/косметика. РАЗНЫЕ (но стабильные на клип) хештеги +
+    # CTA в описании с партнёрской ссылкой. Текстовый CTA на самом видео рисует рендер.
+    if clip.get("category") == TREZZY_CAT:
+        seed = f"{clip.get('title','')}|{clip.get('start','')}|{clip.get('end','')}"
+        pool = TREZZY_HASHTAG_POOL[:]
+        random.Random(seed).shuffle(pool)
+        tags = (["#trezzy", "#shorts"] + pool[:4])[:6]
+        desc = (f"{desc}\n\n🛍 Купить лучший парфюм и косметику — {TREZZY_SITE}\n"
+                f"🔗 Ссылка в шапке профиля → {TREZZY_AFF}").strip()
 
     desc = f"{desc}\n\n{' '.join(tags)}"[:4500]
     return {"title": title or "Shorts", "description": desc, "hashtags": tags}
@@ -308,7 +330,8 @@ def _process_video(item: Dict[str, Any]) -> None:
     # клипов выходит мало. Транскрипт оставляем только для границ/субтитров.
     tr_dur = transcript.get("duration") or 0
     true_dur = video_duration(src) or tr_dur or 0
-    n_clips = auto_clip_count(true_dur)
+    per10 = _load_state().get("clips_per_10min") or settings.get("clips_per_10min") or 3
+    n_clips = auto_clip_count(true_dur, per10)
     print(f"[clipper] {src.name}: файл ~{int(true_dur / 60)} мин (распознано ~{int(tr_dur / 60)} мин, "
           f"сегментов {len(transcript.get('segments') or [])}) → целюсь в {n_clips} клипов", flush=True)
     dur = true_dur
@@ -331,7 +354,7 @@ def _process_video(item: Dict[str, Any]) -> None:
     job_id = f"{item['category']}-{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:5]}"
     job_dir = OUTPUT_DIR / job_id
     res = render_clips(src, moments, transcript, job_dir, settings,
-                       meta={"topic": src.stem, "hashtags": []})
+                       meta={"topic": src.stem, "hashtags": [], "category": item["category"]})
 
     token, chat = _tg_creds()
     st = _load_state()
@@ -977,6 +1000,7 @@ def get_state():
                  + [p for p in sp if p["status"] not in ("scheduled", "notified", "publishing")][-150:])(
                      sorted(st["plan"], key=lambda p: (p["date"], p["slot"]))),
         "tg_connected": all(_tg_creds()),
+        "clips_per_10min": int(st.get("clips_per_10min") or _settings().get("clips_per_10min") or 3),
         # Buster никогда не должен ронять /state (дашборд опрашивает каждые 3с).
         "buster": _safe_buster_state(st),
     }
@@ -1010,6 +1034,20 @@ def enqueue(body: EnqueueIn):
             added += 1
         _save_state()
     return {"queued": added}
+
+
+class ConfigIn(BaseModel):
+    clips_per_10min: int = 3
+
+
+@app.post("/config")
+def set_config(body: ConfigIn):
+    """Владелец выбирает, сколько клипов резать на 10 минут источника (1..20)."""
+    n = max(1, min(int(body.clips_per_10min or 3), 20))
+    with _LOCK:
+        _load_state()["clips_per_10min"] = n
+        _save_state()
+    return {"ok": True, "clips_per_10min": n}
 
 
 @app.post("/accounts/add")

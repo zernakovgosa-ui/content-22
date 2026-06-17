@@ -72,6 +72,14 @@
       <div class="muted" style="margin-top:6px">Качает лучшее качество до 1080p, читает описание ролика —
         названия и описания шортсов получаются по теме. Дальше всё как обычно: одобрение в боте → план.</div>
     </div>
+    <div class="card">
+      <h3>Клипов на 10 минут</h3><hr class="goldline"/>
+      <div class="row" style="align-items:center;gap:10px">
+        <input id="cpm" type="number" min="1" max="20" step="1" style="width:90px" value="3"/>
+        <button onclick="saveCpm()">Сохранить</button>
+        <span class="muted">Сколько шортсов резать на каждые 10 мин источника. Больше — больше клипов (и дольше рендер).</span>
+      </div>
+    </div>
     <div class="grid" id="cats"></div>
     <div class="card">
       <h3>Очередь обработки</h3><hr class="goldline"/>
@@ -207,6 +215,7 @@ function render(){
   if(!S) return;
   $('tg').textContent = S.tg_connected ? 'TG-бот: подключен' : 'TG-бот: нет ключа';
   $('tg').className = 'tg pill ' + (S.tg_connected ? 'ok' : 'err');
+  { const cpm=$('cpm'); if(cpm && document.activeElement!==cpm) cpm.value = S.clips_per_10min || 3; }
 
   // нарезка: категории с файлами
   $('cats').innerHTML = (S.categories||[]).map(c=>{
@@ -331,6 +340,11 @@ function render(){
 }
 
 async function refresh(){ try{ S = await api('/state'); render(); }catch(e){} }
+
+async function saveCpm(){
+  const v = Math.max(1, Math.min(20, parseInt($('cpm').value)||3));
+  try{ await api('/config', {clips_per_10min:v}); $('cpm').value=v; }catch(e){ alert('Не сохранилось'); }
+}
 
 async function startCat(cat){
   const files=[...document.querySelectorAll(`input[data-cat="${cat}"]:checked:not(:disabled)`)].map(i=>i.dataset.f);
