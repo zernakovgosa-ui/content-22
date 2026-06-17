@@ -33,8 +33,14 @@ echo "==> [3/10] docker"
 command -v docker >/dev/null 2>&1 || curl -fsSL https://get.docker.com | sh
 systemctl enable --now docker >/dev/null 2>&1 || true
 
-echo "==> [4/10] код из GitHub"
-if [ -d "$APP/.git" ]; then git -C "$APP" pull --ff-only || true; else git clone "$REPO_URL" "$APP"; fi
+echo "==> [4/10] код (pull / уже распакован / clone)"
+if [ -d "$APP/.git" ]; then
+  git -C "$APP" pull --ff-only || true
+elif [ -f "$APP/clipper/server.py" ]; then
+  echo "    код уже на месте (распакован из архива) — пропускаю clone"
+else
+  git clone "$REPO_URL" "$APP"
+fi
 
 echo "==> [5/10] cobalt-качалка (docker)"
 bash "$APP/deploy/cobalt/setup.sh" || echo "!! cobalt setup с ошибкой — см. выше"
