@@ -1,0 +1,46 @@
+{
+  "b7bfa065": {
+    "job_id": "tg-smoke-test",
+    "path": "C:\\Users\\zerna\\AppData\\Local\\Temp\\tgtest_2y3xh7hn\\job\\clip_01.mp4",
+    "title": "Тест одобрения через Telegram",
+    "score": 99,
+    "caption_file": "C:\\Users\\zerna\\AppData\\Local\\Temp\\tgtest_2y3xh7hn\\job\\clip_01.caption.txt",
+    "chat_id": "5977302770",
+    "message_id": 2,
+    "caption": "🎬 Тест одобрения через Telegram\n⭐ Виральность: 99/100\n🪝 Хук: «Это тест системы одобрения»\n⏱ 9.0с (0.0–9.0с исходника)\n💡 проверка системы\n📦 tg-smoke-test / clip_01.mp4",
+    "sent_at": "2026-06-10 02:20:48"
+  },
+  "48fe5432": {
+    "job_id": "cliptest_20260610-022744",
+    "path": "C:\\Users\\zerna\\Desktop\\контент завод\\output\\jobs\\cliptest_20260610-022744\\clip_02.mp4",
+    "title": "Трамп и Путин",
+    "score": 80,
+    "caption_file": "C:\\Users\\zerna\\Desktop\\контент завод\\output\\jobs\\cliptest_20260610-022744\\clip_02.caption.txt",
+    "chat_id": "5977302770",
+    "message_id": 3,
+    "caption": "🎬 Трамп и Путин\n⭐ Виральность: 80/100\n🪝 Хук: «Trump forever. Vladimir Putin.»\n⏱ 26.56с (339.59–366.15с исходника)\n💡 Политические заявления\n📦 cliptest_20260610-022744 / clip_02.mp4",
+    "sent_at": "2026-06-10 02:38:07"
+  },
+  "c5a78294": {
+    "job_id": "cliptest_20260610-022744",
+    "path": "C:\\Users\\zerna\\Desktop\\контент завод\\output\\jobs\\cliptest_20260610-022744\\clip_03.mp4",
+    "title": "Честное признание",
+    "score": 78,
+    "caption_file": "C:\\Users\\zerna\\Desktop\\контент завод\\output\\jobs\\cliptest_20260610-022744\\clip_03.caption.txt",
+    "chat_id": "5977302770",
+    "message_id": 4,
+    "caption": "🎬 Честное признание\n⭐ Виральность: 78/100\n🪝 Хук: «Honestly, just like this, between us, we don't want to leave here»\n⏱ 14.44с (1619.22–1633.66с исходника)\n💡 Честное и эмоциональное признание\n📦 cliptest_20260610-022744 / clip_03.mp4",
+    "sent_at": "2026-06-10 02:38:10"
+  },
+  "a8625fb3": {
+    "job_id": "cliptest_20260610-022744",
+    "path": "C:\\Users\\zerna\\Desktop\\контент завод\\output\\jobs\\cliptest_20260610-022744\\clip_04.mp4",
+    "title": "Реальность",
+    "score": 75,
+    "caption_file": "C:\\Users\\zerna\\Desktop\\контент завод\\output\\jobs\\cliptest_20260610-022744\\clip_04.caption.txt",
+    "chat_id": "5977302770",
+    "message_id": 5,
+    "caption": "🎬 Реальность\n⭐ Виральность: 75/100\n🪝 Хук: «I think we'll get through a lot of real shit»\n⏱ 16.4с (1223.58–1239.98с исходника)\n💡 Интересное заявление, которое может вызвать интерес\n📦 cliptest_20260610-022744 / clip_04.mp4",
+    "sent_at": "2026-06-10 02:38:13"
+  }
+}

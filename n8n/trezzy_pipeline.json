@@ -1,0 +1,95 @@
+{
+  "name": "TREZZY Content Factory — Pipeline",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            { "field": "hours", "hoursInterval": 6 }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "Каждые 6 часов",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            { "name": "topic", "value": "Партнёрская программа TREZZY" },
+            { "name": "format", "value": "single_review" },
+            { "name": "platform", "value": "instagram" },
+            { "name": "render_mode", "value": "avatar" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-topic",
+      "name": "Тема ролика",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8001/generate-from-plan",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"topic\": \"{{ $json.topic }}\",\n  \"format\": \"{{ $json.format }}\",\n  \"platform\": \"{{ $json.platform }}\",\n  \"render_mode\": \"{{ $json.render_mode }}\",\n  \"quantity\": 1\n}",
+        "options": { "timeout": 180000 }
+      },
+      "id": "call-api",
+      "name": "Создать ролик (TREZZY API)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.status }}",
+              "operation": "equals",
+              "value2": "success"
+            }
+          ]
+        }
+      },
+      "id": "check-success",
+      "name": "Успешно?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "content": "=Ролик готов к публикации\n\nТема: {{ $json.topic }}\nСтатус: {{ $json.status }}\nФайл: {{ $json.output_path }}\nДлительность: {{ $json.duration_seconds }}с\n\nДальше: подключи здесь свой узел публикации\n(Telegram / официальный API соцсети / ручная очередь).",
+        "height": 220,
+        "width": 360
+      },
+      "id": "note-ready",
+      "name": "Готово к публикации",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [1140, 200]
+    }
+  ],
+  "connections": {
+    "Каждые 6 часов": {
+      "main": [[{ "node": "Тема ролика", "type": "main", "index": 0 }]]
+    },
+    "Тема ролика": {
+      "main": [[{ "node": "Создать ролик (TREZZY API)", "type": "main", "index": 0 }]]
+    },
+    "Создать ролик (TREZZY API)": {
+      "main": [[{ "node": "Успешно?", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {},
+  "pinData": {}
+}

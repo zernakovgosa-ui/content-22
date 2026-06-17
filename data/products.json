@@ -1,0 +1,49 @@
+{
+  "products": [
+    {
+      "id": "trz-noir-001",
+      "name": "TREZZY Noir",
+      "gender": "unisex",
+      "vibe": "тёмный, тёплый, дорогой",
+      "notes": ["уд", "ваниль", "табак", "амбра"],
+      "price": "9 900 ₽",
+      "product_url": "https://trezzy.shop/noir"
+    },
+    {
+      "id": "trz-velvet-002",
+      "name": "TREZZY Velvet",
+      "gender": "женский",
+      "vibe": "тёплый, шёлковый, обволакивающий",
+      "notes": ["роза", "оуд", "пачули", "белый мускус"],
+      "price": "11 400 ₽",
+      "product_url": "https://trezzy.shop/velvet"
+    },
+    {
+      "id": "trz-office-003",
+      "name": "TREZZY Office Rich",
+      "gender": "мужской",
+      "vibe": "собранный, чистый, статусный",
+      "notes": ["бергамот", "ветивер", "кедр", "кожа"],
+      "price": "8 600 ₽",
+      "product_url": "https://trezzy.shop/office-rich"
+    },
+    {
+      "id": "trz-quiet-004",
+      "name": "TREZZY Quiet",
+      "gender": "unisex",
+      "vibe": "тихая роскошь, минимализм",
+      "notes": ["ирис", "белый мускус", "сандал", "бумага"],
+      "price": "10 200 ₽",
+      "product_url": "https://trezzy.shop/quiet"
+    },
+    {
+      "id": "trz-date-005",
+      "name": "TREZZY Date Night",
+      "gender": "мужской",
+      "vibe": "тёплый, чувственный, шлейфовый",
+      "notes": ["табак", "ваниль", "ладан", "амбра"],
+      "price": "9 400 ₽",
+      "product_url": "https://trezzy.shop/date-night"
+    }
+  ]
+}

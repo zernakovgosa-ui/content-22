@@ -1,0 +1,1077 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>TREZZY · Content Factory</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            page:    "#f7f4f1",
+            paper:   "#ffffff",
+            cream:   "#efe9e1",
+            ink:     "#2a2520",
+            soft:    "#6b6259",
+            mute:    "#a39a8e",
+            line:    "#e7e0d6",
+            line2:   "#f0ebe3",
+            moss:    "#5a7d4f",
+            mossd:   "#47683d",
+            clay:    "#c8693f",
+            clayd:   "#a8542f",
+            ok:      "#5a7d4f",
+            warn:    "#bd8b2c",
+            err:     "#c0563a"
+          },
+          fontFamily: {
+            sans:  ['Inter','-apple-system','system-ui','sans-serif'],
+            serif: ['"Fraunces"','Georgia','serif'],
+            mono:  ['"JetBrains Mono"','ui-monospace','monospace']
+          }
+        }
+      }
+    };
+  </script>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+  <style>
+    html, body { background:#f7f4f1; color:#2a2520; -webkit-font-smoothing:antialiased; }
+    body { font-family:'Inter',system-ui,sans-serif; }
+    .font-serif { font-family:'Fraunces',Georgia,serif; letter-spacing:-0.01em; font-weight:600; }
+    .font-mono  { font-family:'JetBrains Mono',ui-monospace,monospace; }
+
+    .gold-line { background:#e7e0d6; height:1px; }
+    .card { background:#ffffff; border:1px solid #ece5db; border-radius:24px; position:relative; z-index:1;
+            box-shadow: 0 1px 3px rgba(80,60,40,.04), 0 12px 32px rgba(80,60,40,.05); }
+    .input { background:#f7f4f1; border:1px solid #e2dacd; color:#2a2520; border-radius:14px;
+             padding:12px 15px; width:100%; outline:none; transition:all .15s; font-size:15px; }
+    .input:focus { background:#fff; border-color:#5a7d4f; box-shadow:0 0 0 4px rgba(90,125,79,.12); }
+    .input::placeholder { color:#a39a8e; }
+    .btn-gold { background:#5a7d4f; color:#fff; font-weight:600; border-radius:980px;
+                padding:12px 24px; transition:all .15s; font-size:15px; }
+    .btn-gold:hover { background:#47683d; }
+    .btn-gold:active { transform:scale(.98); }
+    .btn-gold:disabled { opacity:.45; cursor:wait; }
+    .btn-ghost { background:#efe9e1; color:#2a2520; border:none; border-radius:980px;
+                 padding:12px 22px; font-weight:600; font-size:15px; transition:all .15s; }
+    .btn-ghost:hover { background:#e5ddd1; }
+    .pill { padding:5px 13px; border-radius:980px; font-size:12px; font-weight:600;
+            border:none; color:#6b6259; background:#efe9e1; }
+    .pill.gold { color:#47683d; background:#e6efe1; }
+    .pill.ok   { color:#47683d; background:#e6efe1; }
+    .pill.warn { color:#9a7220; background:#f6edd9; }
+    .pill.err  { color:#a8482e; background:#f7e4dd; }
+    .nav-btn { display:flex; align-items:center; gap:12px; padding:11px 15px;
+               border-radius:14px; font-size:14.5px; color:#6b6259; font-weight:500; transition:all .12s; }
+    .nav-btn:hover { background:#efe9e1; color:#2a2520; }
+    .nav-btn.active { background:#2a2520; color:#f7f4f1; }
+    .nav-btn.active .dot { background:#9bbf8f; box-shadow:none; }
+    .dot { width:7px; height:7px; border-radius:99px; background:#5a7d4f; display:inline-block; }
+    .scroll-mute::-webkit-scrollbar { width:8px; height:8px; }
+    .scroll-mute::-webkit-scrollbar-thumb { background:#ddd4c6; border-radius:99px; }
+    table.tbl { width:100%; border-collapse:collapse; font-size:14px; }
+    table.tbl th { text-align:left; color:#a39a8e; font-weight:600; padding:12px 15px; border-bottom:1px solid #ece5db;
+                   font-size:12px; }
+    table.tbl td { padding:14px 15px; border-bottom:1px solid #f3eee6; color:#2a2520; }
+    table.tbl tr:last-child td { border-bottom:none; }
+
+    .grad-card, .grad-hero {
+      background:
+        radial-gradient(1100px 400px at 88% -25%, #efe6d8 0%, transparent 58%),
+        radial-gradient(700px 280px at -8% 125%, #e6efe1 0%, transparent 55%),
+        #fbf8f3;
+      color:#2a2520;
+    }
+    pre.code { background:#2a2520; border:none; border-radius:16px;
+               padding:16px; font-size:12.5px; color:#ece5db; overflow:auto; max-height:300px;
+               font-family:'JetBrains Mono',monospace; }
+    #toast { position:fixed; right:24px; bottom:24px; z-index:99;
+             background:#2a2520; border:none; color:#f7f4f1;
+             padding:14px 20px; border-radius:18px; min-width:280px;
+             box-shadow:0 20px 60px rgba(40,30,20,.3); display:none; font-size:14px; }
+
+    /* ---------- Warm digital factory ---------- */
+    .factory-wrap { position:relative; z-index:1; overflow:hidden; }
+    .factory svg { image-rendering:pixelated; }
+    .factory .scene-floor { fill:#f3ede3; }
+    .factory .belt-dash { stroke-dashoffset:0; }
+    .factory.running .belt-dash { animation: beltSlide 1.1s linear infinite; }
+    @keyframes beltSlide { to { stroke-dashoffset:-30; } }
+    .factory .reel { transform-box:fill-box; transform-origin:center; }
+    .factory.running .reel { animation: reelSpin 2s linear infinite; }
+    @keyframes reelSpin { to { transform:rotate(360deg); } }
+    .pw .legL,.pw .legR,.pw .armL,.pw .armR,.pw .bodyG { transform-box:fill-box; }
+    .pw .legL,.pw .legR { transform-origin:top center; }
+    .pw .armL,.pw .armR { transform-origin:top center; }
+    .pw .bodyG { transform-origin:center bottom; }
+    .factory.running .pw .legL { animation: lL .5s ease-in-out infinite alternate; }
+    .factory.running .pw .legR { animation: lR .5s ease-in-out infinite alternate; }
+    .factory.running .pw .armL { animation: aL .5s ease-in-out infinite alternate; }
+    .factory.running .pw .armR { animation: aR .5s ease-in-out infinite alternate; }
+    .factory.running .pw .bodyG { animation: bob .5s ease-in-out infinite alternate; }
+    @keyframes lL { from{transform:rotate(14deg)} to{transform:rotate(-14deg)} }
+    @keyframes lR { from{transform:rotate(-14deg)} to{transform:rotate(14deg)} }
+    @keyframes aL { from{transform:rotate(-18deg)} to{transform:rotate(18deg)} }
+    @keyframes aR { from{transform:rotate(18deg)} to{transform:rotate(-18deg)} }
+    @keyframes bob{ from{transform:translateY(0)} to{transform:translateY(-2px)} }
+    .walker { transform: translateX(0); }
+    .factory.running .walker { animation: stride 5.5s ease-in-out infinite; }
+    @keyframes stride { 0%{transform:translateX(0)}48%{transform:translateX(150px)}
+      50%{transform:translateX(150px) scaleX(-1)}98%{transform:translateX(0) scaleX(-1)}100%{transform:translateX(0)} }
+    .clip-travel { opacity:0; }
+    .factory.running .clip-travel { animation: clipTravel 5.5s linear infinite; }
+    @keyframes clipTravel { 0%{transform:translateX(0);opacity:0}6%{opacity:1}80%{opacity:1}
+      92%{transform:translateX(620px);opacity:1}100%{transform:translateX(620px);opacity:0} }
+    .uplink { opacity:.2; }
+    .factory.running .uplink { stroke-dasharray:3 7; animation: beltSlide 1s linear infinite; opacity:1; }
+    .blink { animation: blink 1.8s ease-in-out infinite; }
+    @keyframes blink { 0%,100%{opacity:.35} 50%{opacity:1} }
+    .pub-pop { opacity:.35; transform-box:fill-box; transform-origin:center; }
+    .factory.running .pub-pop { animation: pubPop 5.5s ease-in-out infinite; }
+    @keyframes pubPop { 0%,82%{transform:scale(.8);opacity:.4}92%{transform:scale(1.12);opacity:1}100%{transform:scale(1);opacity:.75} }
+    .factory .idle-led { fill:#cdbfa8; }
+    .factory.running .idle-led { fill:#6ea860; }
+    @media (prefers-reduced-motion: reduce) { .factory.running * { animation:none !important; } }
+  </style>
+</head>
+<body class="min-h-screen">
+  <div class="flex min-h-screen">
+    <!-- Sidebar -->
+    <aside class="w-64 shrink-0 p-5 hidden md:flex flex-col" style="background:#ffffff;border-right:1px solid #e6e9e0">
+      <div class="mb-8 flex items-center gap-2.5">
+        <div style="width:32px;height:32px;border-radius:10px;background:#5a7d4f;display:flex;align-items:center;justify-content:center">
+          <span style="color:#ffffff;font-weight:700;font-size:17px">T</span>
+        </div>
+        <div>
+          <div class="font-serif text-xl text-ink" style="letter-spacing:.04em;line-height:1">TREZZY</div>
+          <div class="text-[9px] tracking-[0.22em] text-mute uppercase">content factory</div>
+        </div>
+      </div>
+      <nav class="flex flex-col gap-1" id="nav">
+        <button class="nav-btn active" data-tab="home">  <span class="dot"></span> Главная</button>
+        <button class="nav-btn"        data-tab="create"><span class="dot"></span> Создать видео</button>
+        <button class="nav-btn"        data-tab="jobs">  <span class="dot"></span> Задачи</button>
+        <button class="nav-btn"        data-tab="accounts"><span class="dot"></span> Аккаунты</button>
+        <button class="nav-btn"        data-tab="stats"> <span class="dot"></span> Статистика</button>
+        <button class="nav-btn"        data-tab="settings"><span class="dot"></span> Настройки</button>
+      </nav>
+      <div class="mt-auto pt-6 text-[11px] text-mute" style="border-top:1px solid #eef0ea">
+        <div>Local MVP · v0.1.0</div>
+        <div id="server-time" class="mt-1"></div>
+      </div>
+    </aside>
+
+    <!-- Main -->
+    <main class="flex-1 min-w-0">
+      <!-- Top bar -->
+      <div class="px-6 md:px-10 py-5 flex items-center justify-between" style="border-bottom:1px solid #e6e9e0;background:#ffffff">
+        <div>
+          <div class="text-xs tracking-[0.25em] uppercase text-soft" id="tab-eyebrow">overview</div>
+          <h1 class="font-serif text-2xl md:text-3xl text-ink mt-1" id="tab-title">Главная</h1>
+        </div>
+        <div class="flex items-center gap-3">
+          <span class="pill" id="health-api">API · …</span>
+          <span class="pill" id="health-worker">Worker · …</span>
+        </div>
+      </div>
+
+      <!-- Tab content -->
+      <section class="p-6 md:p-10 max-w-[1300px]">
+
+        <!-- HOME ───────────────────────────────────────────────────── -->
+        <div id="tab-home" class="tab-pane">
+
+          <!-- Digital factory line (soft) -->
+          <div class="card grad-card factory-wrap p-6 mb-4">
+            <div class="flex items-center justify-between mb-2">
+              <div>
+                <div class="text-[12px] text-soft">Производственная линия</div>
+                <div class="font-serif text-2xl mt-1 text-ink">Цифровой завод контента</div>
+              </div>
+              <div class="flex items-center gap-2 px-3.5 py-2 rounded-full" style="background:#f5f5f7">
+                <span class="dot blink" id="factory-led"></span>
+                <span class="text-[12px] font-medium" id="factory-state-label" style="color:#a1a1a6">Ожидание</span>
+              </div>
+            </div>
+
+            <div class="factory" id="factory">
+              <svg viewBox="0 0 800 230" class="w-full" style="max-height:300px" role="img" aria-label="Цифровой завод">
+                <defs>
+                  <linearGradient id="figBody" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0" stop-color="#7da06f"/><stop offset="1" stop-color="#5a7d4f"/>
+                  </linearGradient>
+                  <radialGradient id="dishGlow"><stop offset="0" stop-color="#5a7d4f" stop-opacity=".25"/><stop offset="1" stop-color="#5a7d4f" stop-opacity="0"/></radialGradient>
+                  <!-- soft Apple-style figure -->
+                  <g id="pw">
+                    <g class="pw">
+                      <g class="bodyG">
+                        <rect class="armR" x="-9" y="2" width="6.5" height="19" rx="3.25" fill="#47683d"/>
+                        <rect class="legR" x="-1" y="27" width="7.5" height="17" rx="3.75" fill="#3a5531"/>
+                        <rect class="legL" x="5"  y="27" width="7.5" height="17" rx="3.75" fill="#47683d"/>
+                        <rect x="-5" y="0" width="20" height="30" rx="10" fill="url(#figBody)"/>
+                        <circle cx="5" cy="-12" r="12" fill="#f3d5b8"/>
+                        <path d="M-7 -13 a12 12 0 0 1 24 0 q-12 -6.5 -24 0" fill="#4b3a2a"/>
+                        <rect class="armL" x="13" y="2" width="6.5" height="19" rx="3.25" fill="url(#figBody)"/>
+                      </g>
+                    </g>
+                  </g>
+                  <!-- soft product clip -->
+                  <g id="clip">
+                    <rect x="0" y="0" width="26" height="40" rx="7" fill="#ffffff" stroke="#5a7d4f" stroke-width="2"/>
+                    <circle cx="13" cy="14" r="8" fill="#e6efe1"/>
+                    <polygon points="10,9 10,19 18,14" fill="#5a7d4f"/>
+                    <rect x="5" y="28" width="16" height="3" rx="1.5" fill="#cfe0c4"/>
+                    <rect x="5" y="33" width="11" height="3" rx="1.5" fill="#eef3e8"/>
+                  </g>
+                </defs>
+
+                <!-- soft ground -->
+                <rect class="scene-floor" x="0" y="190" width="800" height="40" rx="0"/>
+                <rect x="40" y="188" width="720" height="2" rx="1" fill="#e3e7ee"/>
+
+                <!-- station 1 -->
+                <g transform="translate(70,98)">
+                  <rect x="0" y="0" width="96" height="66" rx="16" fill="#ffffff" stroke="#ededf2"/>
+                  <circle cx="14" cy="14" r="3.5" class="idle-led"/>
+                  <text x="26" y="18" fill="#a1a1a6" font-size="9" font-family="-apple-system,sans-serif">Сценарий</text>
+                  <rect x="14" y="28" width="48" height="5" rx="2.5" fill="#5a7d4f"/>
+                  <rect x="14" y="38" width="36" height="5" rx="2.5" fill="#dfe7f2"/>
+                  <rect x="14" y="48" width="44" height="5" rx="2.5" fill="#dfe7f2"/>
+                </g>
+                <use href="#pw" x="176" y="128"/>
+
+                <!-- conveyor -->
+                <g>
+                  <rect x="214" y="152" width="360" height="14" rx="7" fill="#eef1f6"/>
+                  <line x1="222" y1="159" x2="566" y2="159" stroke="#5a7d4f" stroke-width="4"
+                        stroke-dasharray="12 16" stroke-linecap="round" class="belt-dash" opacity=".55"/>
+                  <circle cx="226" cy="159" r="11" fill="#ffffff" stroke="#cfe0c4" stroke-width="2.5" class="reel"/>
+                  <line x1="226" y1="150" x2="226" y2="168" stroke="#cfe0c4" stroke-width="2.5" class="reel"/>
+                  <circle cx="562" cy="159" r="11" fill="#ffffff" stroke="#cfe0c4" stroke-width="2.5" class="reel"/>
+                  <line x1="562" y1="150" x2="562" y2="168" stroke="#cfe0c4" stroke-width="2.5" class="reel"/>
+                </g>
+                <g class="clip-travel"><use href="#clip" x="226" y="120"/></g>
+
+                <!-- station 2: render -->
+                <g transform="translate(330,92)">
+                  <rect x="0" y="0" width="124" height="62" rx="16" fill="#ffffff" stroke="#ededf2"/>
+                  <text x="44" y="18" fill="#a1a1a6" font-size="9" font-family="-apple-system,sans-serif">Рендер</text>
+                  <circle cx="62" cy="40" r="15" fill="none" stroke="#5a7d4f" stroke-width="3" class="reel"/>
+                  <circle cx="62" cy="40" r="4" fill="#5a7d4f"/>
+                  <line x1="62" y1="40" x2="62" y2="27" stroke="#b6cfa9" stroke-width="3" class="reel"/>
+                </g>
+                <use href="#pw" x="300" y="128"/>
+                <g class="walker"><use href="#pw" x="470" y="128"/></g>
+
+                <!-- station 3 -->
+                <g transform="translate(596,98)">
+                  <rect x="0" y="0" width="96" height="66" rx="16" fill="#ffffff" stroke="#ededf2"/>
+                  <circle cx="14" cy="14" r="3.5" class="idle-led"/>
+                  <text x="26" y="18" fill="#a1a1a6" font-size="9" font-family="-apple-system,sans-serif">Субтитры</text>
+                  <rect x="14" y="28" width="70" height="6" rx="3" fill="#dfe7f2"/>
+                  <rect x="14" y="40" width="52" height="6" rx="3" fill="#dfe7f2"/>
+                  <rect x="14" y="52" width="62" height="6" rx="3" fill="#5a7d4f"/>
+                </g>
+                <use href="#pw" x="700" y="128"/>
+
+                <!-- uplink + social -->
+                <circle cx="752" cy="120" r="46" fill="url(#dishGlow)"/>
+                <g transform="translate(724,162)">
+                  <rect x="-7" y="-34" width="14" height="34" rx="6" fill="#ffffff" stroke="#e3e7ee"/>
+                  <ellipse cx="0" cy="-40" rx="18" ry="10" fill="#ffffff" stroke="#5a7d4f" stroke-width="2.5" transform="rotate(-28 0 -40)"/>
+                  <circle cx="-5" cy="-42" r="3" fill="#5a7d4f"/>
+                  <line x1="8" y1="-50" x2="46" y2="-78" stroke="#5a7d4f" stroke-width="2.5" class="uplink"/>
+                  <line x1="8" y1="-50" x2="54" y2="-56" stroke="#5a7d4f" stroke-width="2.5" class="uplink"/>
+                  <line x1="8" y1="-50" x2="46" y2="-34" stroke="#5a7d4f" stroke-width="2.5" class="uplink"/>
+                </g>
+                <g class="pub-pop" transform="translate(770,46)">
+                  <rect x="-14" y="-14" width="28" height="28" rx="9" fill="#ffffff" stroke="#e3e7ee" stroke-width="1.5"/>
+                  <polygon points="-4,-6 -4,6 7,0" fill="#5a7d4f"/>
+                </g>
+                <g class="pub-pop" transform="translate(792,104)" style="animation-delay:.4s">
+                  <rect x="-14" y="-14" width="28" height="28" rx="9" fill="#ffffff" stroke="#e3e7ee" stroke-width="1.5"/>
+                  <rect x="-7" y="-7" width="14" height="14" rx="5" fill="none" stroke="#5a7d4f" stroke-width="2"/>
+                  <circle cx="4" cy="-4" r="1.8" fill="#5a7d4f"/>
+                </g>
+                <g class="pub-pop" transform="translate(772,160)" style="animation-delay:.8s">
+                  <rect x="-14" y="-14" width="28" height="28" rx="9" fill="#ffffff" stroke="#e3e7ee" stroke-width="1.5"/>
+                  <text x="0" y="6" text-anchor="middle" font-size="15" fill="#5a7d4f">♪</text>
+                </g>
+              </svg>
+            </div>
+
+            <div class="flex items-center justify-between mt-4 pt-4" style="border-top:1px solid #f0f0f3">
+              <div class="text-[12px] text-mute">Сценарий → Рендер → Субтитры → Публикация</div>
+              <div class="flex gap-7 text-center">
+                <div><div class="text-base font-semibold text-ink" id="fx-queue">0</div><div class="text-[11px] text-mute">в очереди</div></div>
+                <div><div class="text-base font-semibold" style="color:#1a9e54" id="fx-done">0</div><div class="text-[11px] text-mute">выпущено</div></div>
+                <div><div class="text-base font-semibold text-blue" id="fx-mode">FAST</div><div class="text-[11px] text-mute">режим</div></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div class="card p-5">
+              <div class="text-xs text-soft uppercase tracking-widest">Видео сгенерировано</div>
+              <div class="font-serif text-4xl text-ink mt-2" id="kpi-videos">—</div>
+            </div>
+            <div class="card p-5">
+              <div class="text-xs text-soft uppercase tracking-widest">Задач сегодня</div>
+              <div class="font-serif text-4xl text-ink mt-2" id="kpi-today">—</div>
+            </div>
+            <div class="card p-5">
+              <div class="text-xs text-soft uppercase tracking-widest">Аккаунтов</div>
+              <div class="font-serif text-4xl text-ink mt-2" id="kpi-accounts">—</div>
+            </div>
+            <div class="card p-5">
+              <div class="text-xs text-soft uppercase tracking-widest">Просмотры (mock)</div>
+              <div class="font-serif text-4xl text-ink mt-2" id="kpi-views">—</div>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mt-6">
+            <div class="card grad-card p-6 lg:col-span-2">
+              <div class="flex items-center justify-between">
+                <div>
+                  <div class="text-xs text-soft uppercase tracking-widest">Последний пакет</div>
+                  <div class="font-serif text-2xl text-ink mt-1" id="latest-title">—</div>
+                </div>
+                <button class="btn-ghost text-sm" onclick="refreshAll()">Обновить</button>
+              </div>
+              <div class="gold-line my-4"></div>
+              <div id="latest-body" class="text-sm text-soft">Здесь появится последняя сгенерированная задача.</div>
+            </div>
+            <div class="card p-6">
+              <div class="text-xs text-soft uppercase tracking-widest">Сервисы</div>
+              <div class="mt-4 space-y-3 text-sm">
+                <div class="flex justify-between"><span class="text-soft">API</span><span id="svc-api">…</span></div>
+                <div class="flex justify-between"><span class="text-soft">Video worker</span><span id="svc-worker">…</span></div>
+                <div class="flex justify-between"><span class="text-soft">n8n webhook</span><span id="svc-n8n">—</span></div>
+                <div class="flex justify-between"><span class="text-soft">CapCut handoff</span><span class="pill gold">ручной</span></div>
+              </div>
+              <div class="gold-line my-4"></div>
+              <div class="text-xs text-mute">CapCut запускается вручную: открой <code>capcut_checklist.md</code> из папки задачи.</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- CREATE ─────────────────────────────────────────────────── -->
+        <div id="tab-create" class="tab-pane hidden">
+          <div class="grid grid-cols-1 lg:grid-cols-5 gap-6">
+            <form id="create-form" class="card p-6 lg:col-span-2 space-y-4">
+              <div>
+                <label class="text-xs text-soft uppercase tracking-widest">Тема</label>
+                <input class="input mt-2" name="topic" required placeholder="Аромат для свидания" />
+              </div>
+              <div class="grid grid-cols-2 gap-3">
+                <div>
+                  <label class="text-xs text-soft uppercase tracking-widest">Формат</label>
+                  <select class="input mt-2" name="format">
+                    <option value="single_review">single_review</option>
+                    <option value="top_list">top_list</option>
+                    <option value="mood_story">mood_story</option>
+                    <option value="celebrity_style">celebrity_style</option>
+                    <option value="problem_solution">problem_solution</option>
+                    <option value="luxury_quote">luxury_quote</option>
+                    <option value="date_night">date_night</option>
+                    <option value="office_rich">office_rich</option>
+                    <option value="quiet_luxury">quiet_luxury</option>
+                    <option value="perfume_for_mood">perfume_for_mood</option>
+                    <option value="ai_ugc_ad">ai_ugc_ad</option>
+                  </select>
+                </div>
+                <div>
+                  <label class="text-xs text-soft uppercase tracking-widest">Платформа</label>
+                  <select class="input mt-2" name="platform">
+                    <option value="instagram">Instagram</option>
+                    <option value="tiktok">TikTok</option>
+                    <option value="youtube">YouTube Shorts</option>
+                    <option value="all">Все</option>
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label class="text-xs text-soft uppercase tracking-widest">Продукт (опц.)</label>
+                <input class="input mt-2" name="product_name" placeholder="TREZZY Noir" />
+              </div>
+              <div>
+                <label class="text-xs text-soft uppercase tracking-widest">Аудитория</label>
+                <input class="input mt-2" name="target_audience" placeholder="мужчины 25-35" />
+              </div>
+              <div>
+                <label class="text-xs text-soft uppercase tracking-widest">Стиль</label>
+                <input class="input mt-2" name="style" value="premium luxury perfume" />
+              </div>
+              <div>
+                <label class="text-xs text-soft uppercase tracking-widest">Режим рендера</label>
+                <select class="input mt-2" name="render_mode">
+                  <option value="fast">fast — быстрый локальный ролик (текст на фоне)</option>
+                  <option value="avatar">avatar — говорящий герой (D-ID, нужен API-ключ)</option>
+                  <option value="clip">clip — нарезка длинного видео (моменты + субтитры)</option>
+                  <option value="real">real — реальные кадры из жизни (Pexels, как снято человеком)</option>
+                </select>
+                <div class="text-[11px] text-mute mt-1">avatar требует фото в assets/avatar/ и ключ D-ID в Настройках</div>
+              </div>
+              <div id="clip-fields" class="hidden grid grid-cols-2 gap-3">
+                <div class="col-span-2">
+                  <label class="text-xs text-soft uppercase tracking-widest">Исходное видео (для clip)</label>
+                  <input class="input mt-2" name="source_video" placeholder="movie.mp4 — файл из assets/source/" />
+                  <div class="text-[11px] text-mute mt-1">Положи длинный файл в <b>assets/source/</b> и впиши имя. AI выберет лучшие моменты, нарежет 9:16 с фокусом на лицо и вшьёт субтитры по озвучке.</div>
+                </div>
+                <div>
+                  <label class="text-xs text-soft uppercase tracking-widest">Сколько клипов</label>
+                  <input class="input mt-2" type="number" name="clip_count" value="0" min="0" max="30" />
+                  <div class="text-[11px] text-mute mt-1">0 = авто: 2 клипа на каждые 10 минут видео</div>
+                </div>
+              </div>
+              <div class="grid grid-cols-2 gap-3">
+                <div>
+                  <label class="text-xs text-soft uppercase tracking-widest">Количество</label>
+                  <input class="input mt-2" type="number" name="quantity" value="1" min="1" max="5" />
+                </div>
+                <div>
+                  <label class="text-xs text-soft uppercase tracking-widest">Seed (опц.)</label>
+                  <input class="input mt-2" type="number" name="seed" placeholder="42" />
+                </div>
+              </div>
+
+              <div class="gold-line my-2"></div>
+              <div class="flex gap-3">
+                <button type="button" class="btn-ghost flex-1" onclick="onPlanOnly()">Сгенерировать план</button>
+                <button type="submit" class="btn-gold flex-1" id="btn-generate">Создать видео</button>
+              </div>
+              <div class="text-[11px] text-mute">Видео рендерится 30-120 секунд. Это нормально для первого запуска.</div>
+            </form>
+
+            <div class="card p-6 lg:col-span-3">
+              <div class="flex items-center justify-between">
+                <div class="text-xs text-soft uppercase tracking-widest">Превью / результат</div>
+                <span class="pill" id="create-status">idle</span>
+              </div>
+              <div class="gold-line my-4"></div>
+              <div id="create-output" class="text-sm">
+                <div class="text-soft">Нажми «Сгенерировать план», чтобы увидеть hook / script / caption / hashtags. <br/>«Создать видео» запустит worker и соберёт пакет.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- JOBS ───────────────────────────────────────────────────── -->
+        <div id="tab-jobs" class="tab-pane hidden">
+          <div class="card p-0 overflow-hidden">
+            <div class="flex items-center justify-between px-6 py-4">
+              <div>
+                <div class="text-xs text-soft uppercase tracking-widest">Задачи</div>
+                <div class="font-serif text-xl text-ink mt-1">История генераций</div>
+              </div>
+              <button class="btn-ghost text-sm" onclick="loadJobs()">Обновить</button>
+            </div>
+            <div class="gold-line"></div>
+            <div class="overflow-auto scroll-mute">
+              <table class="tbl">
+                <thead>
+                  <tr>
+                    <th>Время</th>
+                    <th>Тема</th>
+                    <th>Формат</th>
+                    <th>Платформа</th>
+                    <th>Статус</th>
+                    <th>QC</th>
+                    <th>Папка</th>
+                  </tr>
+                </thead>
+                <tbody id="jobs-tbody">
+                  <tr><td colspan="7" class="text-soft text-center py-10">Загрузка…</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- ACCOUNTS ───────────────────────────────────────────────── -->
+        <div id="tab-accounts" class="tab-pane hidden">
+          <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div id="accounts-ig" class="card p-6">
+              <div class="text-xs text-soft uppercase tracking-widest">Instagram</div>
+              <div id="ig-list" class="mt-3 space-y-2 text-sm"></div>
+            </div>
+            <div id="accounts-tt" class="card p-6">
+              <div class="text-xs text-soft uppercase tracking-widest">TikTok</div>
+              <div id="tt-list" class="mt-3 space-y-2 text-sm"></div>
+            </div>
+            <div id="accounts-yt" class="card p-6">
+              <div class="text-xs text-soft uppercase tracking-widest">YouTube</div>
+              <div id="yt-list" class="mt-3 space-y-2 text-sm"></div>
+            </div>
+          </div>
+
+          <div class="card p-6 mt-6">
+            <div class="text-xs text-soft uppercase tracking-widest">Добавить / обновить аккаунт</div>
+            <form id="account-form" class="grid grid-cols-1 md:grid-cols-5 gap-3 mt-4">
+              <select class="input" name="platform">
+                <option value="instagram">Instagram</option>
+                <option value="tiktok">TikTok</option>
+                <option value="youtube">YouTube</option>
+              </select>
+              <input class="input" name="handle" placeholder="@handle" required />
+              <input class="input" name="display_name" placeholder="Display name" />
+              <select class="input" name="status">
+                <option value="mock_connected">mock_connected</option>
+                <option value="needs_api_key">needs_api_key</option>
+                <option value="disabled">disabled</option>
+              </select>
+              <button class="btn-gold" type="submit">Сохранить</button>
+            </form>
+            <input class="input mt-3" name="api_key" id="account-api-key" placeholder="API key / token (опционально)" />
+            <div class="text-[11px] text-mute mt-2">Никакого логина/пароля. Только токены и публичные хэндлы.</div>
+          </div>
+        </div>
+
+        <!-- STATS ──────────────────────────────────────────────────── -->
+        <div id="tab-stats" class="tab-pane hidden">
+          <div class="grid grid-cols-1 md:grid-cols-5 gap-4">
+            <div class="card p-5"><div class="text-xs text-soft uppercase tracking-widest">Просмотры</div><div class="font-serif text-3xl text-ink mt-2" id="st-views">—</div></div>
+            <div class="card p-5"><div class="text-xs text-soft uppercase tracking-widest">Лайки</div>     <div class="font-serif text-3xl text-ink mt-2" id="st-likes">—</div></div>
+            <div class="card p-5"><div class="text-xs text-soft uppercase tracking-widest">Сохранения</div><div class="font-serif text-3xl text-ink mt-2" id="st-saves">—</div></div>
+            <div class="card p-5"><div class="text-xs text-soft uppercase tracking-widest">Комменты</div>  <div class="font-serif text-3xl text-ink mt-2" id="st-comments">—</div></div>
+            <div class="card p-5"><div class="text-xs text-soft uppercase tracking-widest">CTR (mock)</div><div class="font-serif text-3xl text-ink mt-2" id="st-ctr">—</div></div>
+          </div>
+          <div class="card p-0 mt-6 overflow-hidden">
+            <div class="px-6 py-4">
+              <div class="text-xs text-soft uppercase tracking-widest">По платформам</div>
+              <div class="font-serif text-xl text-ink mt-1">Mock-данные. Подключи API в Настройках, чтобы пошли реальные.</div>
+            </div>
+            <div class="gold-line"></div>
+            <div class="overflow-auto scroll-mute">
+              <table class="tbl">
+                <thead>
+                  <tr><th>Платформа</th><th>Видео</th><th>Просмотры</th><th>Лайки</th><th>Сохранения</th><th>Комменты</th><th>CTR</th><th>Источник</th></tr>
+                </thead>
+                <tbody id="platforms-tbody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- SETTINGS ───────────────────────────────────────────────── -->
+        <div id="tab-settings" class="tab-pane hidden">
+          <form id="settings-form" class="card p-6 max-w-3xl space-y-4">
+            <div class="text-xs text-soft uppercase tracking-widest">Дефолты контента</div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div><label class="text-[11px] text-soft uppercase">Стиль</label><input class="input mt-1" name="default_style" /></div>
+              <div><label class="text-[11px] text-soft uppercase">CTA</label><input class="input mt-1" name="default_cta" /></div>
+              <div><label class="text-[11px] text-soft uppercase">Бренд</label><input class="input mt-1" name="default_brand" /></div>
+              <div><label class="text-[11px] text-soft uppercase">Платформа по умолчанию</label>
+                <select class="input mt-1" name="default_platform">
+                  <option value="instagram">instagram</option>
+                  <option value="tiktok">tiktok</option>
+                  <option value="youtube">youtube</option>
+                  <option value="all">all</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="gold-line my-2"></div>
+            <div class="text-xs text-soft uppercase tracking-widest">API-ключи (опционально)</div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div><label class="text-[11px] text-soft uppercase">OpenAI</label>     <input class="input mt-1" name="openai_api_key" placeholder="sk-…" /></div>
+              <div><label class="text-[11px] text-soft uppercase">Anthropic</label>  <input class="input mt-1" name="anthropic_api_key" placeholder="sk-ant-…" /></div>
+              <div><label class="text-[11px] text-soft uppercase">ElevenLabs</label> <input class="input mt-1" name="elevenlabs_api_key" /></div>
+              <div><label class="text-[11px] text-soft uppercase">n8n webhook URL</label><input class="input mt-1" name="n8n_webhook_url" placeholder="https://…/webhook/…" /></div>
+              <div><label class="text-[11px] text-soft uppercase">Groq (беспл. — речь+ИИ)</label><input class="input mt-1" name="groq_api_key" placeholder="gsk_… с console.groq.com" /></div>
+              <div><label class="text-[11px] text-soft uppercase">Pexels (беспл. — кадры)</label><input class="input mt-1" name="pexels_api_key" placeholder="ключ с pexels.com/api" /></div>
+            </div>
+
+            <div class="gold-line my-2"></div>
+            <div class="text-xs text-soft uppercase tracking-widest">Качество рендера</div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <select class="input mt-1" name="render_quality">
+                  <option value="max">Максимум — медленнее, лучшее качество (рекомендую)</option>
+                  <option value="fast">Быстро — черновое качество</option>
+                </select>
+                <div class="text-[11px] text-mute mt-1">Максимум: лучший кодек + почти без потерь + самопроверка каждого ролика.</div>
+              </div>
+              <div>
+                <select class="input mt-1" name="clip_framing">
+                  <option value="fill">На весь экран — без полей, спикер крупно (рекомендую)</option>
+                  <option value="wide">С размытыми полями — лицо мельче</option>
+                </select>
+                <div class="text-[11px] text-mute mt-1">Кадрирование нарезки 9:16.</div>
+              </div>
+            </div>
+
+            <div class="gold-line my-2"></div>
+            <div class="text-xs text-soft uppercase tracking-widest">Telegram-одобрение клипов</div>
+            <div class="text-[11px] text-mute -mt-1">Бот шлёт каждый нарезанный клип тебе в личку с кнопками ✅/❌. Одобренные падают в output/approved/ и очередь публикации. Токен — у @BotFather, боту нужно один раз написать /start.</div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div><label class="text-[11px] text-soft uppercase">Bot token</label><input class="input mt-1" name="telegram_bot_token" placeholder="1234567890:AA…" /></div>
+              <div><label class="text-[11px] text-soft uppercase">Chat ID (твой)</label><input class="input mt-1" name="telegram_chat_id" placeholder="5977302770" /></div>
+            </div>
+
+            <div class="gold-line my-2"></div>
+            <div class="text-xs text-soft uppercase tracking-widest">Говорящий аватар (D-ID)</div>
+            <div class="text-[11px] text-mute -mt-1">Получи бесплатный ключ на d-id.com → Settings → API Keys. Фото героя положи в assets/avatar/ (одет, лицо+плечи).</div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div><label class="text-[11px] text-soft uppercase">D-ID API key</label><input class="input mt-1" name="did_api_key" placeholder="вставь ключ D-ID" /></div>
+              <div><label class="text-[11px] text-soft uppercase">D-ID avatar image</label><input class="input mt-1" name="did_avatar_image" placeholder="trezzy_face.png или https://…" /></div>
+              <div><label class="text-[11px] text-soft uppercase">D-ID voice id</label><input class="input mt-1" name="did_voice_id" placeholder="ru-RU-SvetlanaNeural" /></div>
+              <div><label class="text-[11px] text-soft uppercase">D-ID voice provider</label>
+                <select class="input mt-1" name="did_voice_provider">
+                  <option value="microsoft">microsoft</option>
+                  <option value="amazon">amazon</option>
+                  <option value="elevenlabs">elevenlabs</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="gold-line my-2"></div>
+            <div class="text-xs text-soft uppercase tracking-widest">CapCut notes</div>
+            <textarea class="input" name="capcut_workflow_notes" rows="3"></textarea>
+
+            <div class="flex justify-end">
+              <button class="btn-gold" type="submit">Сохранить</button>
+            </div>
+          </form>
+        </div>
+
+      </section>
+    </main>
+  </div>
+
+  <div id="toast"></div>
+
+  <script>
+    const API = location.origin;
+    let CURRENT_PLAN = null;
+
+    // ── nav
+    document.querySelectorAll('#nav .nav-btn').forEach(btn => {
+      btn.addEventListener('click', () => switchTab(btn.dataset.tab));
+    });
+    function switchTab(name) {
+      document.querySelectorAll('#nav .nav-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
+      document.querySelectorAll('.tab-pane').forEach(p => p.classList.toggle('hidden', p.id !== 'tab-' + name));
+      const titles = {
+        home:    ['overview', 'Главная'],
+        create:  ['pipeline', 'Создать видео'],
+        jobs:    ['queue', 'Задачи'],
+        accounts:['identity', 'Аккаунты'],
+        stats:   ['reach', 'Статистика'],
+        settings:['config', 'Настройки'],
+      };
+      const [eyebrow, title] = titles[name] || ['', ''];
+      document.getElementById('tab-eyebrow').textContent = eyebrow;
+      document.getElementById('tab-title').textContent = title;
+      if (name === 'home')     loadHome();
+      if (name === 'jobs')     loadJobs();
+      if (name === 'accounts') loadAccounts();
+      if (name === 'stats')    loadStats();
+      if (name === 'settings') loadSettings();
+    }
+
+    // ── toast
+    function toast(msg, kind = 'ok') {
+      const el = document.getElementById('toast');
+      el.textContent = msg;
+      el.style.borderColor = kind === 'err' ? '#C16B6B' : '#C6A266';
+      el.style.display = 'block';
+      clearTimeout(toast._t);
+      toast._t = setTimeout(() => el.style.display = 'none', 3500);
+    }
+
+    // ── api helpers
+    async function api(path, opts = {}) {
+      const r = await fetch(API + path, opts);
+      const ct = r.headers.get('content-type') || '';
+      const data = ct.includes('application/json') ? await r.json() : await r.text();
+      if (!r.ok) throw new Error(typeof data === 'string' ? data : (data.detail || ('HTTP ' + r.status)));
+      return data;
+    }
+    async function postJson(path, body) {
+      return api(path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json; charset=utf-8' },
+        body: JSON.stringify(body),
+      });
+    }
+
+    // ── health
+    async function loadHealth() {
+      try {
+        const h = await api('/health');
+        document.getElementById('health-api').textContent = 'API · ok';
+        document.getElementById('health-api').className = 'pill ok';
+        document.getElementById('svc-api').innerHTML = '<span class="pill ok">ok</span>';
+        const w = h.worker?.status === 'ok';
+        document.getElementById('health-worker').textContent = 'Worker · ' + (w ? 'ok' : 'down');
+        document.getElementById('health-worker').className = 'pill ' + (w ? 'ok' : 'err');
+        document.getElementById('svc-worker').innerHTML = w ? '<span class="pill ok">ok</span>' : '<span class="pill err">down</span>';
+        document.getElementById('server-time').textContent = (h.time || '').replace('T', ' ').replace('+00:00', ' UTC');
+      } catch (e) {
+        document.getElementById('health-api').textContent = 'API · down';
+        document.getElementById('health-api').className = 'pill err';
+      }
+      try {
+        const s = await api('/settings');
+        document.getElementById('svc-n8n').innerHTML = s.n8n_webhook_url
+          ? '<span class="pill ok">' + new URL(s.n8n_webhook_url).host + '</span>'
+          : '<span class="pill">не настроен</span>';
+      } catch (_) {}
+    }
+
+    // ── home
+    // ── digital factory run-state ───────────────────────────────
+    let _factoryPoll = null;
+    function setFactoryRunning(on) {
+      const f = document.getElementById('factory');
+      const led = document.getElementById('factory-led');
+      const lbl = document.getElementById('factory-state-label');
+      if (!f) return;
+      f.classList.toggle('running', !!on);
+      if (lbl) { lbl.textContent = on ? 'Работает' : 'Ожидание'; lbl.style.color = on ? '#5a7d4f' : '#a39a8e'; }
+      if (led) led.style.background = on ? '#6ea860' : '#cdbfa8';
+    }
+    // While the line is running, poll home faster so workers stop on their own
+    // once the job finishes. Stops polling when nothing is in the queue.
+    function startFactoryWatch() {
+      setFactoryRunning(true);
+      if (_factoryPoll) return;
+      _factoryPoll = setInterval(async () => {
+        try {
+          const j = await api('/jobs?limit=50');
+          const all = j.jobs || [];
+          const queued = all.filter(x => x.status === 'rendering' || x.status === 'planned').length;
+          const done   = all.filter(x => x.status === 'success' || x.status === 'ready').length;
+          const q = document.getElementById('fx-queue'); if (q) q.textContent = queued;
+          const d = document.getElementById('fx-done');  if (d) d.textContent = done;
+          setFactoryRunning(queued > 0);
+          if (queued === 0) { clearInterval(_factoryPoll); _factoryPoll = null; loadHome(); }
+        } catch (e) {}
+      }, 2500);
+    }
+
+    async function loadHome() {
+      try {
+        const stats = await api('/stats');
+        document.getElementById('kpi-videos').textContent = stats.totals?.videos_generated ?? 0;
+        document.getElementById('kpi-views').textContent  = (stats.totals?.views ?? 0).toLocaleString('ru-RU');
+      } catch (e) {}
+      try {
+        const acc = await api('/accounts');
+        const total = (acc.instagram?.length || 0) + (acc.tiktok?.length || 0) + (acc.youtube?.length || 0);
+        document.getElementById('kpi-accounts').textContent = total;
+      } catch (e) {}
+      try {
+        const j = await api('/jobs?limit=200');
+        const today = new Date().toISOString().slice(0, 10);
+        const all = j.jobs || [];
+        const n = all.filter(x => (x.created_at || '').startsWith(today)).length;
+        document.getElementById('kpi-today').textContent = n;
+        // factory line counters + running state
+        const done   = all.filter(x => x.status === 'success' || x.status === 'ready').length;
+        const queued = all.filter(x => x.status === 'rendering' || x.status === 'planned').length;
+        const q = document.getElementById('fx-queue'); if (q) q.textContent = queued;
+        const d = document.getElementById('fx-done');  if (d) d.textContent = done;
+        const m = document.getElementById('fx-mode');
+        if (m && all[0] && all[0].render_mode) m.textContent = String(all[0].render_mode).toUpperCase();
+        // run the line if anything is actively being produced
+        setFactoryRunning(queued > 0);
+      } catch (e) {}
+      try {
+        const l = await api('/latest');
+        renderLatest(l.job);
+      } catch (e) {}
+    }
+    function renderLatest(job) {
+      const t = document.getElementById('latest-title');
+      const b = document.getElementById('latest-body');
+      if (!job) { t.textContent = 'Пока пусто'; b.textContent = 'Создай первое видео на вкладке «Создать видео».'; return; }
+      t.textContent = job.topic;
+      b.innerHTML = `
+        <div class="flex flex-wrap gap-2 mb-3">
+          <span class="pill gold">${escapeHtml(job.format)}</span>
+          <span class="pill">${escapeHtml(job.platform)}</span>
+          <span class="pill ${(job.status === 'ready' || job.status === 'success') ? 'ok' : job.status === 'failed' ? 'err' : 'warn'}">${escapeHtml(job.status)}</span>
+          ${job.qc_score != null ? `<span class="pill">QC ${job.qc_score}%</span>` : ''}
+        </div>
+        <div class="text-soft text-xs">created ${escapeHtml((job.created_at || '').replace('T', ' '))}</div>
+        ${job.output_path ? `<div class="mt-2 text-ink text-xs break-all">${escapeHtml(job.output_path)}</div>` : ''}
+      `;
+    }
+
+    // ── create
+    document.getElementById('create-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      await onGenerate();
+    });
+    function readForm() {
+      const fd = new FormData(document.getElementById('create-form'));
+      const o = Object.fromEntries(fd.entries());
+      o.quantity = parseInt(o.quantity || '1', 10);
+      if (o.seed === '' || o.seed == null) delete o.seed; else o.seed = parseInt(o.seed, 10);
+      o.clip_count = parseInt(o.clip_count || '0', 10);  // 0 = авто (2 клипа / 10 мин)
+      ['product_name','target_audience','source_video'].forEach(k => { if (o[k] === '') delete o[k]; });
+      return o;
+    }
+    // Show clip-only fields (source video, clip count) only in clip mode.
+    (function initClipModeToggle() {
+      const sel = document.querySelector('#create-form [name="render_mode"]');
+      const box = document.getElementById('clip-fields');
+      if (!sel || !box) return;
+      const sync = () => box.classList.toggle('hidden', sel.value !== 'clip');
+      sel.addEventListener('change', sync);
+      sync();
+    })();
+    async function onPlanOnly() {
+      const body = readForm();
+      setCreateStatus('planning…', 'warn');
+      try {
+        const plan = await postJson('/plan', body);
+        CURRENT_PLAN = plan;
+        renderPlan(plan);
+        setCreateStatus('plan ready', 'ok');
+        toast('План готов');
+      } catch (e) {
+        setCreateStatus('error', 'err');
+        toast('Ошибка плана: ' + e.message, 'err');
+      }
+    }
+    async function onGenerate() {
+      const body = readForm();
+      const btn = document.getElementById('btn-generate');
+      btn.disabled = true;
+      setCreateStatus('rendering… (30-120s)', 'warn');
+      startFactoryWatch();  // workers start walking the instant generation begins
+      try {
+        const res = await postJson('/generate-from-plan', body);
+        setCreateStatus('done', 'ok');
+        toast(`Создано задач: ${res.count}`);
+        renderGenerateResult(res);
+        loadHome();
+      } catch (e) {
+        setCreateStatus('error', 'err');
+        toast('Ошибка генерации: ' + e.message, 'err');
+      } finally {
+        btn.disabled = false;
+        setFactoryRunning(false);  // stop the line when the request returns
+      }
+    }
+    function setCreateStatus(text, kind) {
+      const el = document.getElementById('create-status');
+      el.textContent = text;
+      el.className = 'pill ' + (kind || '');
+    }
+    function renderPlan(plan) {
+      const el = document.getElementById('create-output');
+      el.innerHTML = `
+        <div class="space-y-4">
+          <div>
+            <div class="text-xs text-soft uppercase tracking-widest">Hook</div>
+            <div class="font-serif text-2xl text-ink mt-1">${escapeHtml(plan.hook)}</div>
+          </div>
+          <div>
+            <div class="text-xs text-soft uppercase tracking-widest">Script</div>
+            <div class="text-ink mt-1 leading-relaxed">${escapeHtml(plan.script)}</div>
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div>
+              <div class="text-xs text-soft uppercase tracking-widest">Vibe tags</div>
+              <div class="flex flex-wrap gap-2 mt-2">${(plan.vibe_tags || []).map(t => `<span class="pill gold">${escapeHtml(t)}</span>`).join('')}</div>
+            </div>
+            <div>
+              <div class="text-xs text-soft uppercase tracking-widest">Hashtags</div>
+              <div class="flex flex-wrap gap-2 mt-2">${(plan.hashtags || []).map(t => `<span class="pill">${escapeHtml(t)}</span>`).join('')}</div>
+            </div>
+          </div>
+          <div>
+            <div class="text-xs text-soft uppercase tracking-widest">Caption</div>
+            <pre class="code mt-1 whitespace-pre-wrap">${escapeHtml(plan.caption)}</pre>
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div>
+              <div class="text-xs text-soft uppercase tracking-widest">Strategy</div>
+              <pre class="code mt-1 whitespace-pre-wrap">${escapeHtml(JSON.stringify(plan.strategy, null, 2))}</pre>
+            </div>
+            <div>
+              <div class="text-xs text-soft uppercase tracking-widest">Visual director</div>
+              <pre class="code mt-1 whitespace-pre-wrap">${escapeHtml(JSON.stringify(plan.visual, null, 2))}</pre>
+            </div>
+          </div>
+          <div>
+            <div class="text-xs text-soft uppercase tracking-widest">Quality control · score ${plan.quality.score}% · ${plan.quality.ready ? 'ready' : 'needs work'}</div>
+            <pre class="code mt-1 whitespace-pre-wrap">${escapeHtml(JSON.stringify(plan.quality, null, 2))}</pre>
+          </div>
+        </div>
+      `;
+    }
+    function renderGenerateResult(res) {
+      const el = document.getElementById('create-output');
+      el.innerHTML = `
+        <div class="space-y-3">
+          <div class="font-serif text-xl text-ink">Готово: ${res.count} задача(и)</div>
+          ${(res.jobs || []).map(j => `
+            <div class="card p-4">
+              <div class="flex justify-between items-center">
+                <div class="font-medium text-ink">${escapeHtml(j.topic)}</div>
+                <span class="pill ${(j.status === 'ready' || j.status === 'success') ? 'ok' : j.status === 'failed' ? 'err' : 'warn'}">${escapeHtml(j.status)}</span>
+              </div>
+              <div class="text-xs text-soft mt-1">${escapeHtml(j.job_id)}</div>
+              ${j.output_path ? `<div class="text-xs text-ink break-all mt-2">${escapeHtml(j.output_path)}</div>` : ''}
+              ${j.error ? `<div class="text-xs text-err mt-2">${escapeHtml(j.error)}</div>` : ''}
+            </div>
+          `).join('')}
+        </div>
+      `;
+    }
+
+    // ── jobs
+    async function loadJobs() {
+      const tbody = document.getElementById('jobs-tbody');
+      tbody.innerHTML = '<tr><td colspan="7" class="text-soft text-center py-6">Загрузка…</td></tr>';
+      try {
+        const j = await api('/jobs?limit=100');
+        if (!j.jobs || j.jobs.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="7" class="text-soft text-center py-10">Пока пусто. Создай первое видео.</td></tr>';
+          return;
+        }
+        tbody.innerHTML = j.jobs.map(row => {
+          const pill = (row.status === 'ready' || row.status === 'success') ? 'ok' : row.status === 'failed' ? 'err' : 'warn';
+          return `<tr>
+            <td class="text-soft text-xs">${escapeHtml((row.created_at || '').replace('T', ' '))}</td>
+            <td>${escapeHtml(row.topic || '')}</td>
+            <td><span class="pill gold">${escapeHtml(row.format || '')}</span></td>
+            <td>${escapeHtml(row.platform || '')}</td>
+            <td><span class="pill ${pill}">${escapeHtml(row.status || '')}</span></td>
+            <td>${row.qc_score != null ? row.qc_score + '%' : '—'}</td>
+            <td class="text-xs break-all text-soft">${escapeHtml(row.package_dir || '')}</td>
+          </tr>`;
+        }).join('');
+      } catch (e) {
+        tbody.innerHTML = `<tr><td colspan="7" class="text-err text-center py-6">${escapeHtml(e.message)}</td></tr>`;
+      }
+    }
+
+    // ── accounts
+    async function loadAccounts() {
+      try {
+        const a = await api('/accounts');
+        renderAccountBucket('ig-list', a.instagram || []);
+        renderAccountBucket('tt-list', a.tiktok || []);
+        renderAccountBucket('yt-list', a.youtube || []);
+      } catch (e) {
+        toast('Не загрузились аккаунты: ' + e.message, 'err');
+      }
+    }
+    function renderAccountBucket(id, rows) {
+      const el = document.getElementById(id);
+      if (rows.length === 0) {
+        el.innerHTML = '<div class="text-soft text-sm">Нет аккаунтов</div>';
+        return;
+      }
+      el.innerHTML = rows.map(r => {
+        const pill = r.status === 'mock_connected' ? 'gold'
+                   : r.status === 'needs_api_key'  ? 'warn' : '';
+        return `
+          <div class="border border-edge rounded-lg p-3">
+            <div class="flex justify-between items-center">
+              <div class="font-medium">${escapeHtml(r.display_name || r.handle)}</div>
+              <span class="pill ${pill}">${escapeHtml(r.status)}</span>
+            </div>
+            <div class="text-xs text-soft mt-1">${escapeHtml(r.handle)}</div>
+            ${r.notes ? `<div class="text-xs text-mute mt-2">${escapeHtml(r.notes)}</div>` : ''}
+          </div>
+        `;
+      }).join('');
+    }
+    document.getElementById('account-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      const body = Object.fromEntries(fd.entries());
+      body.api_key = document.getElementById('account-api-key').value || '';
+      try {
+        await postJson('/accounts', body);
+        toast('Аккаунт сохранён');
+        loadAccounts();
+      } catch (e) {
+        toast('Ошибка: ' + e.message, 'err');
+      }
+    });
+
+    // ── stats
+    async function loadStats() {
+      try {
+        const s = await api('/stats');
+        const t = s.totals || {};
+        document.getElementById('st-views').textContent     = (t.views ?? 0).toLocaleString('ru-RU');
+        document.getElementById('st-likes').textContent     = (t.likes ?? 0).toLocaleString('ru-RU');
+        document.getElementById('st-saves').textContent     = (t.saves ?? 0).toLocaleString('ru-RU');
+        document.getElementById('st-comments').textContent  = (t.comments ?? 0).toLocaleString('ru-RU');
+        document.getElementById('st-ctr').textContent       = (t.ctr_percent ?? 0) + '%';
+
+        document.getElementById('platforms-tbody').innerHTML = (s.platforms || []).map(p => `
+          <tr>
+            <td><span class="pill gold">${escapeHtml(p.platform)}</span></td>
+            <td>${p.videos}</td>
+            <td>${(p.views ?? 0).toLocaleString('ru-RU')}</td>
+            <td>${(p.likes ?? 0).toLocaleString('ru-RU')}</td>
+            <td>${(p.saves ?? 0).toLocaleString('ru-RU')}</td>
+            <td>${(p.comments ?? 0).toLocaleString('ru-RU')}</td>
+            <td>${p.ctr_percent}%</td>
+            <td><span class="pill">${escapeHtml(p.source)}</span></td>
+          </tr>
+        `).join('');
+      } catch (e) {
+        toast('Ошибка stats: ' + e.message, 'err');
+      }
+    }
+
+    // ── settings
+    async function loadSettings() {
+      try {
+        const s = await api('/settings');
+        const form = document.getElementById('settings-form');
+        for (const [k, v] of Object.entries(s)) {
+          const el = form.querySelector(`[name="${k}"]`);
+          if (el) el.value = v ?? '';
+        }
+      } catch (e) {
+        toast('Ошибка settings: ' + e.message, 'err');
+      }
+    }
+    document.getElementById('settings-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      const body = Object.fromEntries(fd.entries());
+      try {
+        await postJson('/settings', body);
+        toast('Настройки сохранены');
+        loadHealth();
+      } catch (err) {
+        toast('Ошибка: ' + err.message, 'err');
+      }
+    });
+
+    // ── util
+    function escapeHtml(s) {
+      return String(s ?? '').replace(/[&<>"']/g, c => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+      }[c]));
+    }
+
+    function refreshAll() {
+      loadHealth(); loadHome();
+    }
+
+    // boot
+    loadHealth();
+    loadHome();
+    setInterval(loadHealth, 30000);
+  </script>
+</body>
+</html>

@@ -1,0 +1,1313 @@
+# -*- coding: utf-8 -*-
+"""Нарезчик — standalone clip-factory tool (port 8002).
+
+Separate from the TREZZY factory (which stays untouched): drop long videos into
+category folders, batch-cut them into ranked vertical shorts, approve each clip
+in Telegram (✅/❌), distribute approved clips evenly across that category's
+accounts, get a steady 2-posts-per-day plan, enter view counts, and receive
+🚀 (clip went hot) and ⚠️ (account looks shadow-banned) notifications.
+
+Publishing is the owner-in-the-loop kind: at slot time the bot sends the video
+file + caption and the owner posts it manually (Правило №3: никакого автологина).
+
+Reuses the factory's engine: transcribe → ClipAgent (virality scoring) →
+render_clips (face-aware 9:16, karaoke captions). One JSON state file, one lock.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import shutil
+import sys
+import threading
+import time
+import uuid
+from datetime import date, datetime
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+# Консоль Windows бывает cp1251 — принудительно UTF-8, иначе эмодзи/стрелки в логах
+# роняют print с UnicodeEncodeError. А если это случится в ветке УСПЕХА (например
+# «cobalt ✓»), успешное скачивание ложно засчитается как сбой. errors=replace —
+# даже неожиданный символ не уронит процесс.
+for _s in (sys.stdout, sys.stderr):
+    try:
+        _s.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
+CLIPPER_DIR = Path(__file__).resolve().parent
+REPO = CLIPPER_DIR.parent
+sys.path.insert(0, str(REPO))
+
+from fastapi import FastAPI                                   # noqa: E402
+from fastapi.responses import (                               # noqa: E402
+    FileResponse, HTMLResponse, JSONResponse, RedirectResponse,
+)
+from pydantic import BaseModel                                # noqa: E402
+
+from clipper.planner import (                                 # noqa: E402
+    HOT_VIEWS, SALE_VIEWS, auto_clip_count, account_health, build_schedule, distribute,
+    payout_for_views, days_left_to_payout, buster_earnings,
+)
+from clipper.publishers import youtube as yt                  # noqa: E402
+from packages.integrations.telegram_bot import _call, _send_video   # noqa: E402
+
+YT_REDIRECT = "http://localhost:8002/auth/yt/callback"
+STATS_PULL_EVERY_S = 4 * 3600     # auto-pull YouTube stats every 4 hours
+MAX_PUBLISH_ATTEMPTS = 6          # серий аплоада до фолбэка в ручной режим (~2.5ч)
+
+DATA_DIR = CLIPPER_DIR / "data"
+STATE_PATH = DATA_DIR / "state.json"
+SOURCES_DIR = CLIPPER_DIR / "sources"
+OUTPUT_DIR = CLIPPER_DIR / "output" / "jobs"
+SETTINGS_PATH = REPO / "data" / "settings.json"
+
+CATEGORIES = [("videos", "Видосы"), ("films", "Фильмы"), ("series", "Сериалы"),
+              ("buster", "Бустер")]
+CAT_FOLDER = {"videos": "видосы", "films": "фильмы", "series": "сериалы",
+              "buster": "бустер"}
+BUSTER_CAT = "buster"   # клип-программа стримера: своя мета, лимит аккаунтов, выплаты
+VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v"}
+
+_LOCK = threading.RLock()
+_STATE_CACHE: Optional[Dict[str, Any]] = None
+
+
+# ----------------------------------------------------------------------------
+# State + settings
+# ----------------------------------------------------------------------------
+def _default_state() -> Dict[str, Any]:
+    return {"accounts": [], "queue": [], "clips": {}, "plan": [],
+            "health_warned": {}, "tg_offset": 0, "pending_input": None}
+
+
+def _load_state() -> Dict[str, Any]:
+    global _STATE_CACHE
+    with _LOCK:
+        if _STATE_CACHE is None:
+            try:
+                _STATE_CACHE = json.loads(STATE_PATH.read_text(encoding="utf-8"))
+            except Exception:
+                _STATE_CACHE = _default_state()
+        return _STATE_CACHE
+
+
+def _save_state() -> None:
+    with _LOCK:
+        if _STATE_CACHE is None:
+            return
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        tmp = STATE_PATH.with_suffix(".tmp")
+        tmp.write_text(json.dumps(_STATE_CACHE, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp.replace(STATE_PATH)
+
+
+def _settings() -> Dict[str, Any]:
+    try:
+        return json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _tg_creds() -> tuple:
+    s = _settings()
+    return (s.get("telegram_bot_token") or "", str(s.get("telegram_chat_id") or ""))
+
+
+def _now_hm() -> str:
+    return datetime.now().strftime("%H:%M")
+
+
+def _notify(text: str) -> None:
+    """Сообщение владельцу. Сеть до Telegram нестабильна — до 3 попыток."""
+    token, chat = _tg_creds()
+    if not (token and chat):
+        return
+    for attempt in range(1, 4):
+        try:
+            _call(token, "sendMessage", {"chat_id": chat, "text": text[:3900]})
+            return
+        except Exception as e:
+            if attempt < 3:
+                time.sleep(5 * attempt)
+            else:
+                print("[clipper] notify failed (3 попытки):", repr(e))
+
+
+def _send_video_retry(token: str, chat: str, video: Path, caption: str, kb) -> bool:
+    """Отправка видео в TG с 3 попытками (SSL-таймауты — обычное дело)."""
+    for attempt in range(1, 4):
+        try:
+            _send_video(token, chat, video, caption, kb)
+            return True
+        except Exception as e:
+            if attempt < 3:
+                print(f"[clipper] TG видео: попытка {attempt} сорвалась ({str(e)[:80]}), повтор...", flush=True)
+                time.sleep(8 * attempt)
+            else:
+                print("[clipper] TG send failed (3 попытки):", repr(e))
+    return False
+
+
+# ── Красивые метаданные публикации ──────────────────────────────────────────
+DEFAULT_TAGS = {
+    "films":  ["#shorts", "#фильм", "#кино", "#моменты", "#нарезка"],
+    "series": ["#shorts", "#сериал", "#моменты", "#лучшее"],
+    "videos": ["#shorts", "#вирусное", "#моменты"],
+    "buster": ["#buster", "#shorts", "#twitch", "#стрим", "#моменты"],
+}
+
+
+def _polish_meta(clip: Dict[str, Any]) -> Dict[str, Any]:
+    """Аккуратные название/описание/хештеги для публикации.
+
+    Берём то, что сгенерил LLM при нарезке (yt_title/yt_desc/tags); если его не
+    было (сеть лежала) — детерминированно чистим: убираем «момент N», строим
+    заголовок из хука, добавляем дефолтные хештеги категории.
+    """
+    tags = clip.get("tags") or DEFAULT_TAGS.get(clip.get("category", ""), ["#shorts"])
+    tags = [t if t.startswith("#") else f"#{t}" for t in tags][:6]
+
+    title = (clip.get("yt_title") or clip.get("title") or "").strip()
+    hook = (clip.get("hook") or "").strip()
+    if not title or re.search(r"момент\s*\d+\s*$", title, re.IGNORECASE):
+        if hook:
+            words = hook.split()
+            title = " ".join(words[:8]) + ("…" if len(words) > 8 else "")
+        else:
+            title = Path(str(clip.get("source") or "Shorts")).stem.replace("_", " ").strip()
+    title = re.sub(r"\s+", " ", title).strip(" .,—-")
+    if title:
+        title = title[0].upper() + title[1:]
+    title = title[:90]
+
+    desc = (clip.get("yt_desc") or "").strip()
+    if not desc:
+        desc = hook if hook else title
+
+    # Buster-вертикаль: программа требует #buster + twitch-канал, причём для
+    # YouTube — В ЗАГОЛОВКЕ шортса. Вшиваем ОБА здесь — единая точка, через которую
+    # идут и автопост, и TG-карточка одобрения; работает даже без LLM-полировки.
+    if clip.get("category") == BUSTER_CAT:
+        bs = _settings()
+        htag = (bs.get("buster_hashtag") or "#buster").strip()
+        htag = htag if htag.startswith("#") else f"#{htag}"
+        chan = (bs.get("buster_channel_url") or "twitch.tv/buster").strip()
+        # заголовок: оставляем место под автодобавляемый #Shorts (лимит ~95)
+        base = title[:55].rstrip(" .,—-")
+        suff = [x for x in (chan, htag) if x.lower() not in base.lower()]
+        title = (base + ((" " + " ".join(suff)) if suff else "")).strip()
+        # #buster в список хештегов (snippet.tags + строка хештегов в описании)
+        if htag.lower() not in [t.lower() for t in tags]:
+            tags = [htag] + tags
+        tags = tags[:6]
+        # описание ведём с twitch-канала (как в примере правил программы)
+        if chan.lower() not in desc.lower():
+            desc = (f"📺 Стрим: {chan}\n\n" + desc).strip()
+
+    desc = f"{desc}\n\n{' '.join(tags)}"[:4500]
+    return {"title": title or "Shorts", "description": desc, "hashtags": tags}
+
+
+def _llm_polish_clips(clips: List[Dict[str, Any]], source_name: str, cat_label: str,
+                      settings: Dict[str, Any],
+                      src_desc: str = "") -> Optional[List[Dict[str, Any]]]:
+    """Один запрос к LLM: цепляющие названия/описания/хештеги для всех клипов
+    видео. None при любой ошибке — тогда работает детерминированный фолбэк."""
+    prov, key = (None, None)
+    for k, p in (("anthropic_api_key", "anthropic"), ("openai_api_key", "openai"),
+                 ("groq_api_key", "groq")):
+        if settings.get(k):
+            prov, key = p, settings[k]
+            break
+    if not prov:
+        return None
+    try:
+        from packages.agents import llm_client
+        lines = "\n".join(
+            f"{i + 1}. заголовок: {c.get('title') or '—'} | хук: {(c.get('hook') or '—')[:100]}"
+            for i, c in enumerate(clips))
+        system = ("Ты — редактор вирусных Shorts. Для каждого клипа сделай цепляющее "
+                  "НАЗВАНИЕ (до 90 символов, без кавычек, по-русски, интригующее), короткое "
+                  "ОПИСАНИЕ (1-2 предложения) и 4-6 ХЕШТЕГОВ (русские/английские, первым #shorts). "
+                  "Отвечай ТОЛЬКО валидным JSON.")
+        desc_block = f"\nОписание исходного ролика (используй как контекст):\n{src_desc[:700]}\n" \
+            if src_desc else ""
+        user = (f"Источник: {source_name} (категория: {cat_label}).{desc_block} Клипы:\n{lines}\n\n"
+                'JSON: {"items": [{"title": "...", "description": "...", '
+                '"hashtags": ["#shorts", "..."]}]} — ровно по одному элементу на клип, по порядку.')
+        data = llm_client.complete_json(prov, key, system, user, max_tokens=2000, temperature=0.7)
+        items = data.get("items") if isinstance(data, dict) else None
+        if isinstance(items, list) and len(items) == len(clips):
+            return items
+    except Exception as e:
+        print("[clipper] полировка метаданных не удалась:", str(e)[:120])
+    return None
+
+
+# ----------------------------------------------------------------------------
+# Sources
+# ----------------------------------------------------------------------------
+def _ensure_dirs() -> None:
+    for _, folder in CAT_FOLDER.items():
+        (SOURCES_DIR / folder).mkdir(parents=True, exist_ok=True)
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _list_sources() -> Dict[str, List[Dict[str, Any]]]:
+    out: Dict[str, List[Dict[str, Any]]] = {}
+    st = _load_state()
+    queued = {(q["category"], q["file"]) for q in st["queue"]
+              if q["status"] in ("pending", "processing")}
+    for key, folder in CAT_FOLDER.items():
+        items = []
+        d = SOURCES_DIR / folder
+        if d.exists():
+            for p in sorted(d.iterdir()):
+                if p.suffix.lower() in VIDEO_EXTS and p.is_file():
+                    items.append({
+                        "name": p.name,
+                        "size_mb": round(p.stat().st_size / 1e6, 1),
+                        "queued": (key, p.name) in queued,
+                    })
+        out[key] = items
+    return out
+
+
+# ----------------------------------------------------------------------------
+# Batch worker: cut queued videos
+# ----------------------------------------------------------------------------
+def _process_video(item: Dict[str, Any]) -> None:
+    from packages.video.transcribe import transcribe
+    from packages.video.clip_renderer import render_clips, video_duration
+    from packages.agents.clip_agent import ClipAgent
+    from packages.agents.base import AgentContext
+
+    settings = _settings()
+    src = SOURCES_DIR / CAT_FOLDER[item["category"]] / item["file"]
+    if not src.exists():
+        raise RuntimeError(f"файл не найден: {src.name}")
+
+    # Транскрипт — главный (и кэшируемый) шаг; делаем его первым, длительность
+    # берём из него же, чтобы не гонять ffmpeg вторым проходом ради одной цифры.
+    transcript = transcribe(src, settings)
+    # Без распознанной речи выйдут клипы без субтитров и с пустыми названиями —
+    # такой мусор не нарезаем, лучше честная ошибка и кнопка «Повторить».
+    if settings.get("clip_burn_captions", True) and not transcript.get("segments"):
+        err = str(transcript.get("error") or "речь не распозналась")[:120]
+        raise RuntimeError(f"Субтитры не получились ({err}). Обычно это сбой сети до Groq — "
+                           f"нажми «↻ Повторить» в очереди.")
+
+    # Длину для СЧЁТА клипов берём из РЕАЛЬНОГО файла (ffmpeg-заголовок), а не из
+    # транскрипта: на длинном видео Groq-распознавание частичное (квота) и его
+    # "duration" = конец последнего распознанного слова → ролик кажется коротким и
+    # клипов выходит мало. Транскрипт оставляем только для границ/субтитров.
+    tr_dur = transcript.get("duration") or 0
+    true_dur = video_duration(src) or tr_dur or 0
+    n_clips = auto_clip_count(true_dur)
+    print(f"[clipper] {src.name}: файл ~{int(true_dur / 60)} мин (распознано ~{int(tr_dur / 60)} мин, "
+          f"сегментов {len(transcript.get('segments') or [])}) → целюсь в {n_clips} клипов", flush=True)
+    dur = true_dur
+    prov, key = (None, None)
+    for k, p in (("anthropic_api_key", "anthropic"), ("openai_api_key", "openai"),
+                 ("groq_api_key", "groq")):
+        if settings.get(k):
+            prov, key = p, settings[k]
+            break
+    # Если источник скачан с YouTube — у нас есть его настоящее название.
+    topic = (item.get("src_title") or src.stem).strip()
+    ctx = AgentContext(topic=topic, format="clip")
+    sel = ClipAgent(llm_provider=prov, llm_key=key).run(
+        ctx, transcript=transcript, source_duration=dur, target_count=n_clips)
+    moments = sel.get("moments", [])
+    print(f"[clipper] выбрано моментов: {len(moments)} из целевых {n_clips}", flush=True)
+    if not moments:
+        raise RuntimeError("не выбрано ни одного момента")
+
+    job_id = f"{item['category']}-{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:5]}"
+    job_dir = OUTPUT_DIR / job_id
+    res = render_clips(src, moments, transcript, job_dir, settings,
+                       meta={"topic": src.stem, "hashtags": []})
+
+    token, chat = _tg_creds()
+    st = _load_state()
+    cat_label = dict(CATEGORIES)[item["category"]]
+    clips_out = res.get("clips", [])
+    print(f"[clipper] нарезано клипов: {len(clips_out)} (из {len(moments)} моментов)", flush=True)
+
+    # Один LLM-проход: цепляющие названия/описания/хештеги для всех клипов сразу.
+    polished = _llm_polish_clips(clips_out, topic, cat_label, settings,
+                                 src_desc=item.get("src_desc") or "")
+
+    for idx, c in enumerate(clips_out):
+        clip_id = f"{job_id}-c{c['index']:02d}"
+        meta_llm = (polished[idx] if polished else {}) or {}
+        with _LOCK:
+            st["clips"][clip_id] = {
+                "id": clip_id, "job_id": job_id, "category": item["category"],
+                "path": c["path"], "title": c.get("title") or src.stem,
+                "score": c.get("score"), "hook": c.get("hook") or "",
+                "duration": c.get("duration"), "source": src.name,
+                "yt_title": str(meta_llm.get("title") or "").strip()[:90],
+                "yt_desc": str(meta_llm.get("description") or "").strip()[:1000],
+                "tags": [str(t).strip() for t in (meta_llm.get("hashtags") or []) if str(t).strip()][:6],
+                "status": "review" if (token and chat) else "approved",
+                "views": None, "likes": None, "hot_notified": False,
+                "created": datetime.now().isoformat(timespec="seconds"),
+            }
+            _save_state()
+        if token and chat:
+            meta = _polish_meta(st["clips"][clip_id])
+            cap = (f"🎬 {cat_label} | {src.name}\n"
+                   f"⭐ Балл: {c.get('score', '—')} | ⏱ {c.get('duration')}с\n\n"
+                   f"📌 {meta['title']}\n"
+                   f"{' '.join(meta['hashtags'])}\n\nПубликуем?")
+            kb = {"inline_keyboard": [[
+                {"text": "✅ Одобрить", "callback_data": f"c:ok:{clip_id}"},
+                {"text": "❌ Мимо", "callback_data": f"c:no:{clip_id}"},
+            ]]}
+            _send_video_retry(token, chat, Path(c["path"]), cap, kb)
+    item["clips"] = len(clips_out)
+
+
+def _worker_loop() -> None:
+    while True:
+        st = _load_state()
+        job = None
+        with _LOCK:
+            for q in st["queue"]:
+                if q["status"] == "pending":
+                    q["status"] = "processing"
+                    job = q
+                    _save_state()
+                    break
+        if not job:
+            time.sleep(3)
+            continue
+        try:
+            # Источник — ссылка YouTube: сначала качаем (лучшее ≤1080p),
+            # описание ролика станет контекстом для названий шортсов.
+            if job.get("url") and not job.get("downloaded"):
+                from clipper.downloader import download_youtube
+                print(f"[clipper] качаю с YouTube: {job['url']}", flush=True)
+                dl = download_youtube(job["url"], SOURCES_DIR / CAT_FOLDER[job["category"]],
+                                      settings=_settings())
+                with _LOCK:
+                    job["file"] = dl["file"]
+                    job["src_title"] = dl["title"]
+                    job["src_desc"] = dl["description"]
+                    job["downloaded"] = True
+                    _save_state()
+                print(f"[clipper] скачано: {dl['file']} ({dl.get('duration')}с)", flush=True)
+            _process_video(job)
+            with _LOCK:
+                job["status"] = "done"
+                _save_state()
+            print(f"[clipper] {job['file']}: готово, клипов: {job.get('clips')}", flush=True)
+        except Exception as e:
+            with _LOCK:
+                job["status"] = "failed"
+                job["error"] = str(e)[:300]
+                _save_state()
+            print(f"[clipper] {job.get('file') or job.get('url')}: ОШИБКА {e!r}", flush=True)
+
+
+# ----------------------------------------------------------------------------
+# Telegram poller: approvals, posting confirmations, stats entry
+# ----------------------------------------------------------------------------
+def _approved_dir(category: str) -> Path:
+    d = CLIPPER_DIR / "output" / "approved" / CAT_FOLDER[category]
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _handle_callback(cb: Dict[str, Any], token: str, chat: str) -> None:
+    data = str(cb.get("data") or "")
+    cb_id = cb.get("id")
+    st = _load_state()
+    answer = ""
+
+    if data.startswith("c:ok:") or data.startswith("c:no:"):
+        clip_id = data.split(":", 2)[2]
+        clip = st["clips"].get(clip_id)
+        if clip and clip["status"] == "review":
+            with _LOCK:
+                if data.startswith("c:ok:"):
+                    clip["status"] = "approved"
+                    try:
+                        dst = _approved_dir(clip["category"]) / Path(clip["path"]).name
+                        shutil.copyfile(clip["path"], dst)
+                    except Exception:
+                        pass
+                    answer = "✅ В очередь публикаций"
+                else:
+                    clip["status"] = "rejected"
+                    answer = "❌ Отклонён"
+                _save_state()
+        else:
+            answer = "Уже обработан"
+
+    elif data.startswith("p:done:") or data.startswith("p:skip:"):
+        pid = data.split(":", 2)[2]
+        entry = next((p for p in st["plan"] if p["id"] == pid), None)
+        if entry:
+            with _LOCK:
+                entry["status"] = "posted" if data.startswith("p:done:") else "skipped"
+                entry["marked_at"] = datetime.now().isoformat(timespec="seconds")
+                if entry["status"] == "posted":
+                    entry.setdefault("posted_at", entry["marked_at"])  # якорь окна выплаты
+                _save_state()
+            answer = "🟢 Отмечено: опубликован" if data.startswith("p:done:") else "⏭ Пропущен"
+
+    elif data.startswith("st:acc:"):
+        acc_id = data.split(":", 2)[2]
+        acc = next((a for a in st["accounts"] if a["id"] == acc_id), None)
+        if acc:
+            posted = [p for p in st["plan"] if p["account_id"] == acc_id and p["status"] == "posted"]
+            lines = [f"📊 {acc['name']} ({dict(CATEGORIES).get(acc['category'], '')})",
+                     f"Опубликовано: {len(posted)}"]
+            buttons = []
+            total_views = 0
+            for p in posted[-10:]:
+                clip = st["clips"].get(p["clip_id"]) or {}
+                v = clip.get("views")
+                total_views += v or 0
+                label = f"{(clip.get('title') or p['clip_id'])[:28]} — {v if v is not None else '?'} 👁"
+                buttons.append([{"text": label, "callback_data": f"st:clip:{p['clip_id']}"}])
+            lines.append(f"Просмотров (введено): {total_views}")
+            lines.append("Нажми ролик, чтобы ввести/обновить просмотры:")
+            payload = {"chat_id": chat, "text": "\n".join(lines)}
+            if buttons:
+                payload["reply_markup"] = {"inline_keyboard": buttons}
+            _call(token, "sendMessage", payload)
+            answer = ""
+
+    elif data.startswith("st:clip:"):
+        clip_id = data.split(":", 2)[2]
+        with _LOCK:
+            st["pending_input"] = {"type": "views", "clip_id": clip_id}
+            _save_state()
+        clip = st["clips"].get(clip_id) or {}
+        _call(token, "sendMessage", {"chat_id": chat,
+              "text": f"Пришли число просмотров для «{(clip.get('title') or clip_id)[:60]}»\n"
+                      f"(можно «12500» или «12500 800» = просмотры лайки)"})
+        answer = ""
+
+    if cb_id:
+        try:
+            _call(token, "answerCallbackQuery", {"callback_query_id": cb_id, "text": answer[:180]})
+        except Exception:
+            pass
+
+
+def _handle_message(msg: Dict[str, Any], token: str, chat: str) -> None:
+    text = str(msg.get("text") or "").strip()
+    st = _load_state()
+
+    pending = st.get("pending_input")
+    if pending and pending.get("type") == "views":
+        parts = text.replace(",", " ").split()
+        if parts and parts[0].isdigit():
+            views = int(parts[0])
+            likes = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else None
+            clip = st["clips"].get(pending["clip_id"])
+            with _LOCK:
+                if clip is not None:
+                    clip["views"] = views
+                    if likes is not None:
+                        clip["likes"] = likes
+                st["pending_input"] = None
+                _save_state()
+            _call(token, "sendMessage", {"chat_id": chat,
+                  "text": f"Записал: {views} 👁" + (f", {likes} ❤" if likes is not None else "")})
+            _check_hot_clips()
+            return
+        with _LOCK:
+            st["pending_input"] = None
+            _save_state()
+
+    if text.lower() in ("/start", "/stats", "статистика", "📊", "📊 статистика"):
+        buttons = [[{"text": f"{a['name']} ({dict(CATEGORIES).get(a['category'], '')})",
+                     "callback_data": f"st:acc:{a['id']}"}] for a in st["accounts"]]
+        payload = {"chat_id": chat,
+                   "text": "Нарезчик на связи. Выбери аккаунт для статистики:" if buttons
+                           else "Нарезчик на связи. Аккаунтов пока нет — добавь в дашборде (порт 8002)."}
+        if buttons:
+            payload["reply_markup"] = {"inline_keyboard": buttons}
+        _call(token, "sendMessage", payload)
+
+
+def _tg_poller_loop() -> None:
+    while True:
+        token, chat = _tg_creds()
+        if not (token and chat):
+            time.sleep(20)
+            continue
+        st = _load_state()
+        try:
+            res = _call(token, "getUpdates",
+                        {"offset": int(st.get("tg_offset") or 0) + 1, "timeout": 25,
+                         "allowed_updates": ["message", "callback_query"]}, timeout=35)
+            for upd in res.get("result") or []:
+                with _LOCK:
+                    st["tg_offset"] = max(int(st.get("tg_offset") or 0), int(upd["update_id"]))
+                    _save_state()
+                cb = upd.get("callback_query")
+                msg = upd.get("message")
+                from_id = str(((cb or msg or {}).get("from") or {}).get("id") or "")
+                if from_id != str(chat):
+                    continue  # only the owner
+                if cb:
+                    _handle_callback(cb, token, chat)
+                elif msg:
+                    _handle_message(msg, token, chat)
+        except Exception as e:
+            s = str(e)
+            if "409" in s:
+                print("[clipper] TG: другой поллер активен (завод?). Жду 30с...", flush=True)
+                time.sleep(30)
+            else:
+                print("[clipper] TG poll error:", s[:160])
+                time.sleep(10)
+
+
+# ----------------------------------------------------------------------------
+# Scheduler: due posts, hot clips, account health
+# ----------------------------------------------------------------------------
+def _check_hot_clips() -> None:
+    st = _load_state()
+    acc_by_id = {a["id"]: a for a in st["accounts"]}
+    clip_acc = {}
+    clip_posted_at = {}
+    for p in st["plan"]:
+        if p.get("status") == "posted":
+            clip_acc[p["clip_id"]] = acc_by_id.get(p["account_id"], {})
+            clip_posted_at[p["clip_id"]] = p.get("posted_at") or p.get("marked_at")
+    # Настройки Buster для напоминаний о выплате (читаются один раз).
+    bs = _settings()
+    b_table = bs.get("buster_payout_table") or []
+    b_window = int(bs.get("buster_payout_window_days", 14) or 14)
+    b_cur = bs.get("buster_payout_currency") or "$"
+    b_form = bs.get("buster_payout_form_url") or ""
+    b_contact = bs.get("buster_payout_contact") or ""
+    now = datetime.now()
+    for clip in st["clips"].values():
+        v = clip.get("views")
+        if not isinstance(v, int):
+            continue
+        views_str = f"{v:,}".replace(",", " ")
+        if v >= HOT_VIEWS and not clip.get("hot_notified"):
+            with _LOCK:
+                clip["hot_notified"] = True
+                _save_state()
+            _notify(f"🚀 РОЛИК СТРЕЛЯЕТ!\n«{(clip.get('title') or '')[:80]}»\n"
+                    f"{views_str} просмотров — задумайся о дубле/продолжении!")
+        # Бизнес-сигнал владельца: 400k+ = канал созрел для продажи.
+        if v >= SALE_VIEWS and not clip.get("sale_notified"):
+            with _LOCK:
+                clip["sale_notified"] = True
+                _save_state()
+            acc_name = clip_acc.get(clip["id"], {}).get("name", "?")
+            _notify(f"💰 КАНАЛ ГОТОВ К ПРОДАЖЕ!\n"
+                    f"Аккаунт: {acc_name}\n«{(clip.get('title') or '')[:80]}»\n"
+                    f"{views_str} просмотров — залёт случился, можно выставлять. "
+                    f"Перед продажей: чистые страйки, включённые расширенные функции "
+                    f"поднимают цену.")
+
+        # Buster: напомнить сдать ролик на выплату, пока окно (14 дней) открыто.
+        if clip.get("category") == BUSTER_CAT and not clip.get("buster_submitted"):
+            payout = payout_for_views(v, b_table)
+            if payout > 0:
+                days_left = days_left_to_payout(clip_posted_at.get(clip["id"]), b_window, now)
+                window_open = (days_left is None) or (days_left >= 0)
+                if window_open and not clip.get("buster_payout_notified"):
+                    with _LOCK:
+                        clip["buster_payout_notified"] = True
+                        _save_state()
+                    dl_txt = f"{days_left} дн" if isinstance(days_left, int) else "—"
+                    _notify(f"💵 БУСТЕР: ролик набрал {views_str} → выплата {b_cur}{payout}!\n"
+                            f"«{(clip.get('title') or '')[:70]}»\n"
+                            f"Сдай на выплату (окно: {dl_txt}): {b_form}\n"
+                            f"Вопросы: {b_contact}")
+                if (isinstance(days_left, int) and 0 <= days_left <= 2
+                        and not clip.get("buster_payout_urgent_notified")):
+                    with _LOCK:
+                        clip["buster_payout_urgent_notified"] = True
+                        _save_state()
+                    _notify(f"⏳ БУСТЕР: на «{(clip.get('title') or '')[:60]}» осталось "
+                            f"{days_left} дн окна выплаты ({b_cur}{payout}). Успей сдать: {b_form}")
+
+
+def _check_health() -> None:
+    st = _load_state()
+    today = date.today().isoformat()
+    for acc in st["accounts"]:
+        posted = [p for p in st["plan"]
+                  if p["account_id"] == acc["id"] and p["status"] == "posted"]
+        views = [st["clips"].get(p["clip_id"], {}).get("views") for p in posted]
+        if account_health(views) == "warn":
+            last = st["health_warned"].get(acc["id"], "")
+            if last[:10] != today:  # max one warning per day per account
+                with _LOCK:
+                    st["health_warned"][acc["id"]] = today
+                    _save_state()
+                _notify(f"⚠️ Аккаунт «{acc['name']}»: последние ролики почти без просмотров. "
+                        f"Похоже на теневой бан — проверь вручную и сделай паузу 2-3 дня.")
+
+
+def _yt_ready(acc: Dict[str, Any]) -> bool:
+    y = acc.get("yt") or {}
+    return (acc.get("platform") == "youtube"
+            and bool(y.get("client_id")) and bool(y.get("client_secret"))
+            and bool(y.get("refresh_token")))
+
+
+def _manual_post_notify(p: Dict[str, Any], clip: Dict[str, Any], acc: Dict[str, Any],
+                        token: str, chat: str, prefix: str = "") -> None:
+    """Ручной режим: бот шлёт файл + готовый текст для копипасты + кнопки."""
+    if not (token and chat and clip.get("path") and Path(clip["path"]).exists()):
+        return
+    meta = _polish_meta(clip)
+    cap = (f"{prefix}⏰ ПОРА ПОСТИТЬ\n"
+           f"Аккаунт: {acc.get('name', '?')}\n\n"
+           f"📌 Название:\n{meta['title']}\n\n"
+           f"📝 Описание:\n{meta['description'][:600]}\n\n"
+           f"Скачай видео и опубликуй с этим текстом.")
+    kb = {"inline_keyboard": [[
+        {"text": "🟢 Опубликовал", "callback_data": f"p:done:{p['id']}"},
+        {"text": "⏭ Пропустить", "callback_data": f"p:skip:{p['id']}"},
+    ]]}
+    _send_video_retry(token, chat, Path(clip["path"]), cap, kb)
+
+
+def _auto_publish(plan_id: str) -> None:
+    """Загрузить клип на YouTube канала аккаунта (официальный API)."""
+    st = _load_state()
+    p = next((x for x in st["plan"] if x["id"] == plan_id), None)
+    if not p or p["status"] != "publishing":
+        return
+    clip = st["clips"].get(p["clip_id"]) or {}
+    acc = next((a for a in st["accounts"] if a["id"] == p["account_id"]), {})
+    token, chat = _tg_creds()
+    try:
+        if not (clip.get("path") and Path(clip["path"]).exists()):
+            raise RuntimeError("файл клипа не найден")
+        meta = _polish_meta(clip)
+        y = acc["yt"]
+        vid = None
+        last_err: Optional[Exception] = None
+        # Сеть до Google нестабильна — до 3 попыток с паузой, потом фолбэк в бот.
+        for attempt in range(1, 4):
+            try:
+                access = yt.refresh_access_token(y["client_id"], y["client_secret"],
+                                                 y["refresh_token"])
+                vid = yt.upload_video(access, clip["path"], meta["title"], meta["description"],
+                                      tags=[t.lstrip("#") for t in meta["hashtags"]])
+                break
+            except Exception as e:
+                last_err = e
+                if attempt < 3:
+                    print(f"[clipper] автопост: попытка {attempt}/3 сорвалась "
+                          f"({str(e)[:80]}), повтор через {20 * attempt}с...", flush=True)
+                    time.sleep(20 * attempt)
+        if vid is None:
+            raise last_err or RuntimeError("upload failed")
+        with _LOCK:
+            p["status"] = "posted"
+            p["video_id"] = vid
+            p["marked_at"] = datetime.now().isoformat(timespec="seconds")
+            p.setdefault("posted_at", p["marked_at"])   # неизменный якорь окна выплаты
+            p.pop("attempts", None)
+            p.pop("next_try", None)
+            clip["yt_video_id"] = vid
+            _save_state()
+        _notify(f"✅ АВТОПОСТ: «{acc.get('name', '?')}»\n"
+                f"«{(clip.get('title') or '')[:80]}»\nhttps://youtu.be/{vid}")
+        print(f"[clipper] автопост ok: {acc.get('name')} -> {vid}", flush=True)
+    except Exception as e:
+        # Сеть владельца рвётся ВОЛНАМИ: вместо мгновенного фолбэка переносим
+        # загрузку на позже (10, 20, 30... минут) — бот дожмёт сам. Ручное
+        # сообщение шлём только когда исчерпали все попытки (~2.5 часа).
+        attempts = int(p.get("attempts") or 0) + 1
+        print(f"[clipper] автопост FAILED ({acc.get('name')}), серия {attempts}/"
+              f"{MAX_PUBLISH_ATTEMPTS}: {e!r}", flush=True)
+        if attempts < MAX_PUBLISH_ATTEMPTS:
+            delay_min = 10 * attempts
+            nt = datetime.fromtimestamp(time.time() + delay_min * 60)
+            with _LOCK:
+                p["status"] = "scheduled"
+                p["attempts"] = attempts
+                p["next_try"] = nt.isoformat(timespec="seconds")
+                _save_state()
+            if attempts == 1:   # одно уведомление, без спама на каждый повтор
+                _notify(f"📶 Сеть до YouTube моргнула — автопост для "
+                        f"«{acc.get('name', '?')}» повторю сам через {delay_min} мин "
+                        f"(и ещё до {MAX_PUBLISH_ATTEMPTS - 1} попыток). Ничего делать не надо.")
+        else:
+            with _LOCK:
+                p["status"] = "notified"   # все попытки исчерпаны → ручной режим
+                p.pop("attempts", None)
+                p.pop("next_try", None)
+                _save_state()
+            _notify(f"⚠️ Автопост для «{acc.get('name', '?')}» не пробился за "
+                    f"{MAX_PUBLISH_ATTEMPTS} серий попыток: {str(e)[:120]}\n"
+                    f"Кидаю ролик ручным сообщением.")
+            _manual_post_notify(p, clip, acc, token, chat, prefix="⚠️ (автопост упал) ")
+
+
+def _pull_yt_stats_once() -> int:
+    """Один проход авто-статистики. Возвращает число обновлённых клипов."""
+    st = _load_state()
+    updated = 0
+    for acc in st["accounts"]:
+        if not _yt_ready(acc):
+            continue
+        vids = {}
+        for p in st["plan"]:
+            if p["account_id"] == acc["id"] and p.get("video_id"):
+                clip = st["clips"].get(p["clip_id"])
+                if clip is not None:
+                    vids[p["video_id"]] = clip
+        if not vids:
+            continue
+        try:
+            y = acc["yt"]
+            access = yt.refresh_access_token(y["client_id"], y["client_secret"],
+                                             y["refresh_token"])
+            stats = yt.fetch_stats(access, list(vids.keys()))
+        except Exception as e:
+            print(f"[clipper] stats pull failed ({acc.get('name')}): {str(e)[:120]}")
+            continue
+        with _LOCK:
+            for vid, s in stats.items():
+                clip = vids.get(vid)
+                if clip is not None:
+                    clip["views"] = s.get("views", clip.get("views"))
+                    clip["likes"] = s.get("likes", clip.get("likes"))
+                    updated += 1
+            _save_state()
+    _check_hot_clips()
+    _check_health()
+    return updated
+
+
+def _stats_loop() -> None:
+    """Каждые 4 часа сам тянет просмотры/лайки опубликованных YouTube-роликов."""
+    time.sleep(90)   # дать серверу подняться
+    while True:
+        try:
+            _pull_yt_stats_once()
+        except Exception as e:
+            print("[clipper] stats loop error:", repr(e))
+        time.sleep(STATS_PULL_EVERY_S)
+
+
+def _scheduler_loop() -> None:
+    while True:
+        try:
+            token, chat = _tg_creds()
+            st = _load_state()
+            today = date.today().isoformat()
+            now_hm = _now_hm()
+            now_iso = datetime.now().isoformat(timespec="seconds")
+            for p in st["plan"]:
+                if p["status"] != "scheduled":
+                    continue
+                # Отложенный повтор после сетевого сбоя — ждём своего времени.
+                if p.get("next_try") and p["next_try"] > now_iso:
+                    continue
+                if p["date"] < today or (p["date"] == today and p["slot"] <= now_hm):
+                    clip = st["clips"].get(p["clip_id"]) or {}
+                    acc = next((a for a in st["accounts"] if a["id"] == p["account_id"]), {})
+                    if _yt_ready(acc):
+                        # АВТОПОСТ: официальный YouTube API, в отдельном потоке.
+                        with _LOCK:
+                            p["status"] = "publishing"
+                            _save_state()
+                        threading.Thread(target=_auto_publish, args=(p["id"],),
+                                         daemon=True, name=f"yt-pub-{p['id']}").start()
+                    else:
+                        with _LOCK:
+                            p["status"] = "notified"
+                            _save_state()
+                        _manual_post_notify(p, clip, acc, token, chat)
+            _check_hot_clips()
+            _check_health()
+        except Exception as e:
+            print("[clipper] scheduler error:", repr(e))
+        time.sleep(60)
+
+
+# ----------------------------------------------------------------------------
+# API
+# ----------------------------------------------------------------------------
+app = FastAPI(title="Нарезчик", version="1.0")
+
+
+class EnqueueIn(BaseModel):
+    category: str
+    files: List[str]
+
+
+class AccountIn(BaseModel):
+    name: str
+    category: str
+    platform: str = ""            # "youtube" → авто-постинг; иначе ручной режим через бота
+    yt_client_id: str = ""
+    yt_client_secret: str = ""
+
+
+class AccountDel(BaseModel):
+    id: str
+
+
+class StatsIn(BaseModel):
+    clip_id: str
+    views: int
+    likes: Optional[int] = None
+
+
+class MarkIn(BaseModel):
+    plan_id: str
+    status: str  # posted | skipped
+
+
+@app.get("/")
+def root():
+    # no-cache: иначе браузер может держать старый HTML без новых кнопок
+    return FileResponse(CLIPPER_DIR / "dashboard.html",
+                        headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/health")
+def health():
+    return {"ok": True, "tool": "clipper"}
+
+
+BUSTER_CHECKLIST = [
+    "Buster — главное лицо в клипе (иначе заявку отклонят)",
+    "Реклама/баннеры на видео замазаны",
+    "Ролик опубликован не больше 14 дней назад — успей сдать в окно",
+    "Момент из стрима после 01.01.2026 (старое не принимают)",
+    "Без накрутки просмотров/лайков/комментариев",
+    "Без чужого/перезалитого видео",
+    "Без фейковых реакций",
+    "#buster и twitch.tv/buster в заголовке и описании (вшиваются автоматически)",
+]
+
+
+def _buster_state(st: Dict[str, Any]) -> Dict[str, Any]:
+    """Сводка Buster-вертикали для дашборда: заработок $, право на выплату, чек-лист."""
+    s = _settings()
+    table = s.get("buster_payout_table") or []
+    window = int(s.get("buster_payout_window_days", 14) or 14)
+    cur = s.get("buster_payout_currency") or "$"
+    now = datetime.now()
+    earn = buster_earnings(st["clips"], st["plan"], st["accounts"], table, BUSTER_CAT)
+    b_accs = [a for a in st["accounts"] if a.get("category") == BUSTER_CAT]
+    accounts = [{"id": a["id"], "name": a.get("name"), "yt_connected": _yt_ready(a),
+                 "earned": earn["by_account"].get(a["id"], 0)} for a in b_accs]
+    acc_name = {a["id"]: a.get("name") for a in b_accs}
+    clips = []
+    for r in earn["rows"]:
+        clip = st["clips"].get(r["clip_id"]) or {}
+        days_left = days_left_to_payout(r["posted_at"], window, now)
+        clips.append({
+            "clip_id": r["clip_id"],
+            "title": clip.get("title") or r["clip_id"],
+            "account": acc_name.get(r["account_id"], "?"),
+            "views": r["views"],
+            "payout": r["payout"],
+            "posted_at": r["posted_at"],
+            "days_left": days_left,
+            "payout_due": (r["payout"] > 0) and (days_left is None or days_left >= 0),
+            "submitted": bool(clip.get("buster_submitted")),
+        })
+    # вперёд — то, что можно/пора сдавать (payout>0, окно открыто), по убыванию срочности
+    clips.sort(key=lambda c: (c["submitted"], not c["payout_due"],
+                              c["days_left"] if isinstance(c["days_left"], int) else 999))
+    return {
+        "enabled": bool(s.get("buster_enabled", True)),
+        "total_earned": earn["total"],
+        "currency": cur,
+        "accounts": accounts,
+        "accounts_count": len(b_accs),
+        "max_accounts": int(s.get("buster_max_accounts", 2) or 2),
+        "clips": clips,
+        "form_url": s.get("buster_payout_form_url") or "",
+        "contact": s.get("buster_payout_contact") or "",
+        "window_days": window,
+        "table": table,
+        "streamer": s.get("buster_streamer") or "buster",
+        "channel_url": s.get("buster_channel_url") or "twitch.tv/buster",
+        "checklist": BUSTER_CHECKLIST,
+    }
+
+
+@app.get("/state")
+def get_state():
+    st = _load_state()
+    clips = sorted(st["clips"].values(), key=lambda c: c.get("created") or "", reverse=True)
+    accounts = []
+    for a in st["accounts"]:
+        posted = [p for p in st["plan"] if p["account_id"] == a["id"] and p["status"] == "posted"]
+        planned = [p for p in st["plan"] if p["account_id"] == a["id"] and p["status"] in ("scheduled", "notified")]
+        views = [st["clips"].get(p["clip_id"], {}).get("views") for p in posted]
+        total = sum(v for v in views if isinstance(v, int))
+        pub = {k: v for k, v in a.items() if k != "yt"}   # не светим секреты в UI
+        pub["yt_connected"] = _yt_ready(a)
+        pub["auto"] = _yt_ready(a)
+        pub["warmed"] = a.get("warmed", True)   # старые аккаунты считаем прогретыми
+        accounts.append({**pub, "posted": len(posted), "planned": len(planned),
+                         "total_views": total, "health": account_health(views)})
+    return {
+        "categories": [{"key": k, "label": l, "folder": str(SOURCES_DIR / CAT_FOLDER[k])}
+                       for k, l in CATEGORIES],
+        "sources": _list_sources(),
+        "queue": st["queue"][-50:],
+        "clips": clips[:200],
+        "accounts": accounts,
+        # Активные посты показываем ВСЕ (иначе при разросшейся истории будущие
+        # строки выпадут из среза), завершённые — последние 150.
+        "plan": (lambda sp: [p for p in sp if p["status"] in ("scheduled", "notified", "publishing")]
+                 + [p for p in sp if p["status"] not in ("scheduled", "notified", "publishing")][-150:])(
+                     sorted(st["plan"], key=lambda p: (p["date"], p["slot"]))),
+        "tg_connected": all(_tg_creds()),
+        # Buster никогда не должен ронять /state (дашборд опрашивает каждые 3с).
+        "buster": _safe_buster_state(st),
+    }
+
+
+def _safe_buster_state(st: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        return _buster_state(st)
+    except Exception as e:
+        print("[clipper] buster state error:", str(e)[:140])
+        return {"enabled": False}
+
+
+@app.post("/enqueue")
+def enqueue(body: EnqueueIn):
+    if body.category not in CAT_FOLDER:
+        return JSONResponse({"error": "unknown category"}, status_code=400)
+    st = _load_state()
+    added = 0
+    with _LOCK:
+        queued = {(q["category"], q["file"]) for q in st["queue"]
+                  if q["status"] in ("pending", "processing")}
+        for f in body.files:
+            if (body.category, f) in queued:
+                continue
+            if not (SOURCES_DIR / CAT_FOLDER[body.category] / f).exists():
+                continue
+            st["queue"].append({"id": uuid.uuid4().hex[:8], "file": f,
+                                "category": body.category, "status": "pending",
+                                "added": datetime.now().isoformat(timespec="seconds")})
+            added += 1
+        _save_state()
+    return {"queued": added}
+
+
+@app.post("/accounts/add")
+def accounts_add(body: AccountIn):
+    if body.category not in CAT_FOLDER or not body.name.strip():
+        return JSONResponse({"error": "bad account"}, status_code=400)
+    platform = body.platform.strip().lower()
+    if platform == "youtube" and not (body.yt_client_id.strip() and body.yt_client_secret.strip()):
+        return JSONResponse({"error": "для YouTube нужны client_id и client_secret "
+                                      "(Google Cloud Console → Credentials → OAuth Desktop app)"},
+                            status_code=400)
+    st = _load_state()
+    with _LOCK:
+        # Buster: только YouTube и жёсткий лимит аккаунтов (правила программы).
+        if body.category == BUSTER_CAT:
+            s = _settings()
+            if platform != "youtube":
+                return JSONResponse({"error": "Бустер: аккаунт должен быть YouTube — "
+                                              "вертикаль работает только с YouTube Shorts"},
+                                    status_code=400)
+            limit = int(s.get("buster_max_accounts", 2) or 2)
+            if sum(1 for a in st["accounts"] if a.get("category") == BUSTER_CAT) >= limit:
+                return JSONResponse({"error": f"Бустер: лимит {limit} аккаунта по правилам "
+                                              f"программы — больше добавить нельзя"},
+                                    status_code=400)
+        acc: Dict[str, Any] = {"id": uuid.uuid4().hex[:8], "name": body.name.strip(),
+                               "category": body.category, "platform": platform,
+                               # Мягкий режим: не блокируем (ферма каналов на продажу),
+                               # 🧊 — ручной тормоз на время отлёжки, если нужно.
+                               "warmed": True}
+        if platform == "youtube":
+            acc["yt"] = {"client_id": body.yt_client_id.strip(),
+                         "client_secret": body.yt_client_secret.strip(),
+                         "refresh_token": ""}
+        st["accounts"].append(acc)
+        _save_state()
+    return {"ok": True, "id": acc["id"]}
+
+
+@app.post("/accounts/del")
+def accounts_del(body: AccountDel):
+    st = _load_state()
+    with _LOCK:
+        st["accounts"] = [a for a in st["accounts"] if a["id"] != body.id]
+        st["plan"] = [p for p in st["plan"]
+                      if p["account_id"] != body.id or p["status"] in ("posted", "skipped")]
+        _save_state()
+    return {"ok": True}
+
+
+@app.post("/plan/build")
+def plan_build():
+    st = _load_state()
+    with _LOCK:
+        planned_clips = {p["clip_id"] for p in st["plan"]}
+        built = 0
+        unwarmed = 0
+        for cat_key, _ in CATEGORIES:
+            # Стратегия прогрева: на непрогретые аккаунты посты не планируем.
+            unwarmed += sum(1 for a in st["accounts"]
+                            if a["category"] == cat_key and not a.get("warmed", True))
+            accs = [a["id"] for a in st["accounts"]
+                    if a["category"] == cat_key and a.get("warmed", True)]
+            clips = [c["id"] for c in sorted(st["clips"].values(),
+                                             key=lambda c: -(c.get("score") or 0))
+                     if c["category"] == cat_key and c["status"] == "approved"
+                     and c["id"] not in planned_clips]
+            if not accs or not clips:
+                continue
+            backlog = {a: sum(1 for p in st["plan"] if p["account_id"] == a
+                              and p["status"] in ("scheduled", "notified")) for a in accs}
+            busy: Dict[str, Dict[str, int]] = {}
+            for p in st["plan"]:
+                if p["status"] in ("scheduled", "notified"):
+                    busy.setdefault(p["account_id"], {})
+                    busy[p["account_id"]][p["date"]] = busy[p["account_id"]].get(p["date"], 0) + 1
+            assignments = distribute(clips, accs, backlog)
+            entries = build_schedule(assignments, date.today(), busy, now_hm=_now_hm())
+            for e in entries:
+                e["id"] = uuid.uuid4().hex[:8]
+                e["status"] = "scheduled"
+                st["plan"].append(e)
+                built += 1
+        _save_state()
+    return {"planned": built, "unwarmed": unwarmed}
+
+
+@app.post("/stats/set")
+def stats_set(body: StatsIn):
+    st = _load_state()
+    clip = st["clips"].get(body.clip_id)
+    if not clip:
+        return JSONResponse({"error": "no such clip"}, status_code=404)
+    with _LOCK:
+        clip["views"] = int(body.views)
+        if body.likes is not None:
+            clip["likes"] = int(body.likes)
+        _save_state()
+    _check_hot_clips()
+    return {"ok": True}
+
+
+@app.post("/post/mark")
+def post_mark(body: MarkIn):
+    st = _load_state()
+    entry = next((p for p in st["plan"] if p["id"] == body.plan_id), None)
+    if not entry or body.status not in ("posted", "skipped"):
+        return JSONResponse({"error": "bad request"}, status_code=400)
+    with _LOCK:
+        entry["status"] = body.status
+        entry["marked_at"] = datetime.now().isoformat(timespec="seconds")
+        if body.status == "posted":
+            entry.setdefault("posted_at", entry["marked_at"])  # якорь окна выплаты
+        _save_state()
+    return {"ok": True}
+
+
+class BusterSubmitIn(BaseModel):
+    clip_id: str
+    submitted: bool = True
+
+
+@app.post("/buster/submit")
+def buster_submit(body: BusterSubmitIn):
+    """Отметить buster-клип как сданный на выплату (форму заполняет владелец сам).
+
+    Это просто бухгалтерия дашборда: сданные перестают маячить и не шлют повторных
+    напоминаний. Ничего никуда не отправляет.
+    """
+    st = _load_state()
+    clip = st["clips"].get(body.clip_id)
+    if not clip:
+        return JSONResponse({"error": "no such clip"}, status_code=404)
+    with _LOCK:
+        if body.submitted:
+            clip["buster_submitted"] = True
+            clip["buster_submitted_at"] = datetime.now().isoformat(timespec="seconds")
+        else:
+            clip.pop("buster_submitted", None)
+            clip.pop("buster_submitted_at", None)
+        _save_state()
+    return {"ok": True}
+
+
+class DownloadIn(BaseModel):
+    url: str
+    category: str
+
+
+@app.post("/download")
+def download(body: DownloadIn):
+    """Ссылка на YouTube → очередь: скачать (лучшее ≤1080p) и нарезать."""
+    from clipper.downloader import looks_like_youtube
+    url = body.url.strip()
+    if body.category not in CAT_FOLDER:
+        return JSONResponse({"error": "unknown category"}, status_code=400)
+    if not looks_like_youtube(url):
+        return JSONResponse({"error": "это не похоже на ссылку YouTube"}, status_code=400)
+    st = _load_state()
+    with _LOCK:
+        if any(q.get("url") == url and q["status"] in ("pending", "processing")
+               for q in st["queue"]):
+            return JSONResponse({"error": "эта ссылка уже в очереди"}, status_code=400)
+        st["queue"].append({"id": uuid.uuid4().hex[:8], "file": "⬇ " + url[:60],
+                            "url": url, "category": body.category, "status": "pending",
+                            "added": datetime.now().isoformat(timespec="seconds")})
+        _save_state()
+    return {"ok": True}
+
+
+class WarmIn(BaseModel):
+    id: str
+    warmed: bool
+
+
+@app.post("/accounts/warm")
+def accounts_warm(body: WarmIn):
+    """Отметить аккаунт прогретым (стратегия: отлёжка → активность → шортсы)."""
+    st = _load_state()
+    acc = next((a for a in st["accounts"] if a["id"] == body.id), None)
+    if not acc:
+        return JSONResponse({"error": "no such account"}, status_code=404)
+    with _LOCK:
+        acc["warmed"] = bool(body.warmed)
+        _save_state()
+    return {"ok": True}
+
+
+class RetryIn(BaseModel):
+    id: str
+
+
+@app.post("/queue/retry")
+def queue_retry(body: RetryIn):
+    """Упавшую задачу нарезки — обратно в очередь."""
+    st = _load_state()
+    q = next((x for x in st["queue"] if x["id"] == body.id), None)
+    if not q or q["status"] != "failed":
+        return JSONResponse({"error": "задача не найдена или не в статусе failed"}, status_code=400)
+    with _LOCK:
+        q["status"] = "pending"
+        q.pop("error", None)
+        _save_state()
+    return {"ok": True}
+
+
+class PublishIn(BaseModel):
+    plan_id: str
+
+
+@app.post("/post/publish")
+def post_publish(body: PublishIn):
+    """🚀 Опубликовать прямо сейчас (не дожидаясь слота). Только YouTube-авто."""
+    st = _load_state()
+    entry = next((p for p in st["plan"] if p["id"] == body.plan_id), None)
+    if not entry or entry["status"] not in ("scheduled", "notified"):
+        return JSONResponse({"error": "пост не найден или уже обработан"}, status_code=400)
+    acc = next((a for a in st["accounts"] if a["id"] == entry["account_id"]), None)
+    if not acc or not _yt_ready(acc):
+        return JSONResponse({"error": "аккаунт не подключен к YouTube — опубликуй вручную "
+                                      "и нажми «🟢 опубликовал»"}, status_code=400)
+    with _LOCK:
+        entry["status"] = "publishing"
+        _save_state()
+    threading.Thread(target=_auto_publish, args=(entry["id"],),
+                     daemon=True, name=f"yt-pubnow-{entry['id']}").start()
+    return {"ok": True}
+
+
+@app.get("/auth/yt/start")
+def yt_auth_start(id: str):
+    """Открывает Google-консент для канала аккаунта id (loopback OAuth)."""
+    st = _load_state()
+    acc = next((a for a in st["accounts"] if a["id"] == id), None)
+    if not acc or acc.get("platform") != "youtube" or not acc.get("yt", {}).get("client_id"):
+        return JSONResponse({"error": "аккаунт не найден или не YouTube"}, status_code=400)
+    url = yt.build_auth_url(acc["yt"]["client_id"], YT_REDIRECT, state=id)
+    return RedirectResponse(url)
+
+
+@app.get("/auth/yt/callback")
+def yt_auth_callback(state: str = "", code: str = "", error: str = ""):
+    if error or not (state and code):
+        return HTMLResponse(f"<h3>❌ Не подключено: {error or 'нет кода'}</h3>", status_code=400)
+    st = _load_state()
+    acc = next((a for a in st["accounts"] if a["id"] == state), None)
+    if not acc or not acc.get("yt"):
+        return HTMLResponse("<h3>❌ Аккаунт не найден</h3>", status_code=404)
+    try:
+        tokens = yt.exchange_code(acc["yt"]["client_id"], acc["yt"]["client_secret"],
+                                  code, YT_REDIRECT)
+    except Exception as e:
+        return HTMLResponse(f"<h3>❌ Ошибка обмена кода: {str(e)[:300]}</h3>", status_code=500)
+    with _LOCK:
+        acc["yt"]["refresh_token"] = tokens["refresh_token"]
+        _save_state()
+    _notify(f"🔗 YouTube подключен: «{acc['name']}» — автопостинг активен.")
+    return HTMLResponse(
+        "<div style='font:16px/1.6 Segoe UI;max-width:480px;margin:80px auto;text-align:center'>"
+        f"<h2>✅ Канал «{acc['name']}» подключен</h2>"
+        "<p>Автопубликация включена. Эту вкладку можно закрыть.</p></div>")
+
+
+@app.post("/tg/test")
+def tg_test():
+    token, chat = _tg_creds()
+    if not (token and chat):
+        return JSONResponse({"error": "нет telegram_bot_token/telegram_chat_id в настройках завода"},
+                            status_code=400)
+    _notify("🔪 Нарезчик подключен и на связи!")
+    return {"ok": True}
+
+
+@app.on_event("startup")
+def _startup():
+    _ensure_dirs()
+    # Необязательный исходящий прокси (ключ "https_proxy" в data/settings.json):
+    # urllib/yt-dlp читают эти переменные — лечит вечные SSL-таймауты до
+    # Google/Telegram на нестабильной сети. Это про связность, не про обходы.
+    proxy = (_settings().get("https_proxy") or "").strip()
+    if proxy:
+        os.environ["HTTPS_PROXY"] = proxy
+        os.environ["HTTP_PROXY"] = proxy
+        print(f"[clipper] исходящий прокси включён ({proxy.split('@')[-1][:40]})", flush=True)
+    st = _load_state()
+    with _LOCK:
+        # Если сервер упал посреди загрузки — вернуть пост в очередь. Старые
+        # версии могли оставить и 'failed' в плане — это тупик без кнопок,
+        # мигрируем обратно в расписание.
+        for p in st["plan"]:
+            if p.get("status") in ("publishing", "failed"):
+                p["status"] = "scheduled"
+            # Якорь 14-дневного окна выплаты для уже опубликованных (старые записи).
+            if p.get("status") == "posted" and not p.get("posted_at"):
+                p["posted_at"] = p.get("marked_at") or datetime.now().isoformat(timespec="seconds")
+        _save_state()
+    threading.Thread(target=_worker_loop, daemon=True, name="clipper-worker").start()
+    threading.Thread(target=_tg_poller_loop, daemon=True, name="clipper-tg").start()
+    threading.Thread(target=_scheduler_loop, daemon=True, name="clipper-sched").start()
+    threading.Thread(target=_stats_loop, daemon=True, name="clipper-stats").start()
+    print("[clipper] Нарезчик запущен: http://127.0.0.1:8002", flush=True)

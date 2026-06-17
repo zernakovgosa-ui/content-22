@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Нарезчик</title>
+<style>
+  :root{--bg:#f6f1e7;--card:#fffdf8;--ink:#2b2620;--soft:#7a6f5d;--mute:#a89c86;
+        --gold:#b08d2f;--line:#e8dfcd;--ok:#2e7d32;--warn:#b26a00;--err:#b3261e}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:15px/1.5 "Segoe UI",system-ui,sans-serif}
+  .wrap{max-width:1100px;margin:0 auto;padding:28px 20px 80px}
+  h1{font-family:Georgia,serif;font-weight:600;font-size:30px;margin:0}
+  h1 .knife{color:var(--gold)}
+  .sub{color:var(--soft);margin:4px 0 22px}
+  .tabs{display:flex;gap:8px;margin-bottom:20px;flex-wrap:wrap}
+  .tab{padding:9px 18px;border-radius:999px;border:1px solid var(--line);
+       background:var(--card);cursor:pointer;color:var(--soft);font-weight:500}
+  .tab.act{background:var(--ink);color:#fff;border-color:var(--ink)}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:16px;
+        padding:18px 20px;margin-bottom:16px;box-shadow:0 1px 3px rgba(60,50,30,.06)}
+  .card h3{margin:0 0 10px;font-family:Georgia,serif;font-weight:600;font-size:18px}
+  .goldline{height:2px;background:linear-gradient(90deg,var(--gold),transparent);
+            border:0;margin:6px 0 14px}
+  table{width:100%;border-collapse:collapse;font-size:13.5px}
+  th{color:var(--mute);text-transform:uppercase;font-size:11px;letter-spacing:.06em;
+     text-align:left;padding:6px 8px;border-bottom:1px solid var(--line)}
+  td{padding:8px;border-bottom:1px solid var(--line);vertical-align:top}
+  .pill{display:inline-block;padding:2px 10px;border-radius:999px;font-size:12px;
+        background:#efe7d4;color:var(--soft)}
+  .pill.ok{background:#e3f1e4;color:var(--ok)} .pill.warn{background:#fdf0dc;color:var(--warn)}
+  .pill.err{background:#fbe5e3;color:var(--err)} .pill.gold{background:#f5ead0;color:var(--gold)}
+  button{padding:9px 18px;border-radius:10px;border:1px solid var(--ink);
+         background:var(--ink);color:#fff;cursor:pointer;font-weight:500}
+  button.ghost{background:transparent;color:var(--ink)}
+  button:disabled{opacity:.45;cursor:default}
+  input,select{padding:9px 12px;border:1px solid var(--line);border-radius:10px;
+               background:#fff;font-size:14px;color:var(--ink)}
+  .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  .muted{color:var(--mute);font-size:13px}
+  .src{display:flex;align-items:center;gap:8px;padding:6px 4px;border-bottom:1px dashed var(--line)}
+  .src:last-child{border-bottom:0}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px}
+  .num{font-family:Georgia,serif;font-size:26px}
+  .tg{position:fixed;top:14px;right:16px;font-size:12px;padding:4px 12px;border-radius:999px}
+</style>
+</head>
+<body>
+<div id="tg" class="tg pill">…</div>
+<div class="wrap">
+  <h1><span class="knife">✂</span> Нарезчик</h1>
+  <div class="sub">Длинные видео → залётные клипы → одобрение в Telegram → план постинга по аккаунтам</div>
+
+  <div class="tabs">
+    <div class="tab act" data-t="cut">Нарезка</div>
+    <div class="tab" data-t="accs">Аккаунты</div>
+    <div class="tab" data-t="plan">План</div>
+    <div class="tab" data-t="stats">Статистика</div>
+    <div class="tab" data-t="buster">💰 Бустер</div>
+  </div>
+
+  <!-- ── НАРЕЗКА ── -->
+  <div id="t-cut">
+    <div class="card">
+      <h3>⬇ Скачать с YouTube и нарезать</h3><hr class="goldline"/>
+      <div class="row">
+        <input id="yt-url" placeholder="https://youtube.com/watch?v=… или youtu.be/…" style="flex:2;min-width:280px"/>
+        <select id="yt-cat"></select>
+        <button onclick="downloadYt()">⬇ Скачать и нарезать</button>
+      </div>
+      <div class="muted" style="margin-top:6px">Качает лучшее качество до 1080p, читает описание ролика —
+        названия и описания шортсов получаются по теме. Дальше всё как обычно: одобрение в боте → план.</div>
+    </div>
+    <div class="grid" id="cats"></div>
+    <div class="card">
+      <h3>Очередь обработки</h3><hr class="goldline"/>
+      <table><thead><tr><th>Файл</th><th>Категория</th><th>Статус</th><th>Клипов</th></tr></thead>
+      <tbody id="queue"></tbody></table>
+    </div>
+    <div class="card">
+      <h3>Свежие клипы</h3><hr class="goldline"/>
+      <table><thead><tr><th>Клип</th><th>Балл</th><th>Категория</th><th>Статус</th></tr></thead>
+      <tbody id="clips"></tbody></table>
+    </div>
+  </div>
+
+  <!-- ── АККАУНТЫ ── -->
+  <div id="t-accs" style="display:none">
+    <div class="card">
+      <h3>Добавить аккаунт</h3><hr class="goldline"/>
+      <div class="row">
+        <input id="acc-name" placeholder="Название (например @clips_films_1)" style="flex:1;min-width:200px"/>
+        <select id="acc-cat"></select>
+        <select id="acc-platform" onchange="togglePlat()">
+          <option value="">✋ Вручную (через бота)</option>
+          <option value="youtube">🤖 YouTube — автопостинг</option>
+        </select>
+        <button onclick="addAcc()">Добавить</button>
+      </div>
+      <div class="muted" style="margin-top:10px;line-height:1.7">
+        <b>🔥 Мини-прогрев нового канала</b> (рекомендация, НЕ блокирует — но ускоряет первый залёт
+        и поднимает цену канала при продаже):<br/>
+        1) Дай каналу 2–5 дней «отлёжки» · 2) Оформи: аватар, шапка, описание ·
+        3) Включи расширенные функции в YouTube Studio (свежий канал без них часто сидит на 0–300 просмотров) ·
+        4) Немного живой активности в нише. Хочешь придержать канал на это время — нажми «🔥 прогрет»,
+        переключится в «🧊» и посты на него планироваться не будут, пока не вернёшь.
+      </div>
+      <div id="yt-fields" class="row" style="display:none;margin-top:10px">
+        <input id="yt-cid" placeholder="Google client_id (…apps.googleusercontent.com)" style="flex:2;min-width:260px"/>
+        <input id="yt-csec" placeholder="client_secret" style="flex:1;min-width:160px"/>
+        <div class="muted" style="width:100%">Google Cloud Console → APIs &amp; Services → включи «YouTube Data API v3» → Credentials → OAuth client ID → тип <b>Web application (Веб-приложение)</b>. В <b>Authorized redirect URIs</b> добавь ТОЧНО: <code style="font-size:11px">http://localhost:8002/auth/yt/callback</code> (http, порт 8002, без слэша в конце). Один клиент на все каналы. Consent screen: добавь себя в Test users или переведи в «In production» (в Testing токен живёт 7 дней). После добавления аккаунта нажми «🔗 Подключить» и войди в Google-аккаунт ЭТОГО канала.</div>
+      </div>
+    </div>
+    <div class="card">
+      <h3>Аккаунты</h3><hr class="goldline"/>
+      <table><thead><tr><th>Имя</th><th>Категория</th><th>Платформа</th><th>Опубл.</th><th>В плане</th><th>Здоровье</th><th></th></tr></thead>
+      <tbody id="accs"></tbody></table>
+    </div>
+  </div>
+
+  <!-- ── ПЛАН ── -->
+  <div id="t-plan" style="display:none">
+    <div class="card">
+      <div class="row" style="justify-content:space-between">
+        <div><h3 style="margin-bottom:2px">План публикаций</h3>
+        <div class="muted">Одобренные клипы → равномерно по аккаунтам категории, по 2 в день</div></div>
+        <button onclick="buildPlan()">Сформировать план</button>
+      </div>
+      <hr class="goldline"/>
+      <table><thead><tr><th>Дата</th><th>Время</th><th>Аккаунт</th><th>Клип</th><th>Статус</th><th></th></tr></thead>
+      <tbody id="plan"></tbody></table>
+    </div>
+  </div>
+
+  <!-- ── СТАТИСТИКА ── -->
+  <div id="t-stats" style="display:none">
+    <div class="grid" id="stat-cards"></div>
+    <div class="card">
+      <h3>Просмотры по клипам</h3><hr class="goldline"/>
+      <div class="muted" style="margin-bottom:8px">Вводи цифры здесь или через бота («📊 Статистика»). От 80 000 — придёт 🚀-уведомление.</div>
+      <table><thead><tr><th>Клип</th><th>Аккаунт</th><th>Просмотры</th><th>Лайки</th><th></th></tr></thead>
+      <tbody id="stat-rows"></tbody></table>
+    </div>
+  </div>
+
+  <!-- ── БУСТЕР ── -->
+  <div id="t-buster" style="display:none">
+    <div class="card">
+      <h3>💰 Бустер — заработок</h3><hr class="goldline"/>
+      <div id="buster-head"><div class="muted">Загрузка…</div></div>
+    </div>
+    <div class="card">
+      <h3>Клипы на выплату</h3><hr class="goldline"/>
+      <div class="muted" style="margin-bottom:8px">Оплата по высшему достигнутому порогу, НЕ суммируется.
+        Заполнил форму — жми «✅ сдал», чтобы клип перестал маячить.</div>
+      <table><thead><tr><th>Клип</th><th>Аккаунт</th><th>Просмотры</th><th>Выплата</th><th>Окно</th><th></th></tr></thead>
+      <tbody id="buster-clips"></tbody></table>
+    </div>
+    <div class="card">
+      <h3>📝 Сдать на выплату</h3><hr class="goldline"/>
+      <div class="row" id="buster-form-row"></div>
+    </div>
+    <div class="card">
+      <h3>Условия программы (проверь перед сдачей)</h3><hr class="goldline"/>
+      <div id="buster-checklist" class="muted" style="line-height:1.9"></div>
+      <div id="buster-table" class="muted" style="margin-top:10px"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+let S = null;
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const CLS = {pending:'',processing:'warn',done:'ok',failed:'err',review:'warn',approved:'ok',
+             rejected:'err',scheduled:'',notified:'warn',publishing:'warn',posted:'ok',skipped:''};
+const RU  = {pending:'в очереди',processing:'режется',done:'готово',failed:'ошибка',
+             review:'на одобрении',approved:'одобрен',rejected:'отклонён',
+             scheduled:'запланирован',notified:'отправлен в TG',publishing:'⏫ загружается',
+             posted:'опубликован',skipped:'пропущен'};
+
+document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
+  document.querySelectorAll('.tab').forEach(x => x.classList.remove('act'));
+  t.classList.add('act');
+  ['cut','accs','plan','stats','buster'].forEach(k => $('t-'+k).style.display = (k===t.dataset.t)?'':'none');
+});
+
+async function api(path, body){
+  const r = await fetch(path, body ? {method:'POST',headers:{'Content-Type':'application/json'},
+                                      body:JSON.stringify(body)} : undefined);
+  let j = {};
+  try { j = await r.json(); } catch(e) {}
+  if (!r.ok && !j.error) {
+    j.error = (r.status === 404)
+      ? 'Сервер работает на СТАРОМ коде — закрой окно CLIPPER и запусти CLIPPER.bat заново'
+      : (j.detail || ('Ошибка сервера: ' + r.status));
+  }
+  return j;
+}
+
+function catName(k){ const c=(S?.categories||[]).find(c=>c.key===k); return c?c.label:k; }
+function accName(id){ const a=(S?.accounts||[]).find(a=>a.id===id); return a?a.name:'?'; }
+function clipTitle(id){ const c=(S?.clips||[]).find(c=>c.id===id); return c?(c.title||id):id; }
+
+function render(){
+  if(!S) return;
+  $('tg').textContent = S.tg_connected ? 'TG-бот: подключен' : 'TG-бот: нет ключа';
+  $('tg').className = 'tg pill ' + (S.tg_connected ? 'ok' : 'err');
+
+  // нарезка: категории с файлами
+  $('cats').innerHTML = (S.categories||[]).map(c=>{
+    const files = (S.sources?.[c.key])||[];
+    const list = files.length ? files.map((f,i)=>`
+      <label class="src"><input type="checkbox" data-cat="${c.key}" data-f="${esc(f.name)}" ${f.queued?'disabled checked':''}/>
+      <span style="flex:1">${esc(f.name)}</span><span class="muted">${f.size_mb} МБ${f.queued?' · в очереди':''}</span></label>`).join('')
+      : `<div class="muted">Пусто. Кидай файлы в папку:<br><code style="font-size:11px">${esc(c.folder)}</code></div>`;
+    return `<div class="card"><h3>${esc(c.label)}</h3><hr class="goldline"/>${list}
+      <div style="margin-top:12px"><button onclick="startCat('${c.key}')" ${files.some(f=>!f.queued)?'':'disabled'}>Старт ▶</button></div></div>`;
+  }).join('');
+
+  $('queue').innerHTML = (S.queue||[]).slice().reverse().map(q=>`
+    <tr><td>${esc(q.file)}</td><td>${esc(catName(q.category))}</td>
+    <td><span class="pill ${CLS[q.status]||''}">${RU[q.status]||q.status}</span>
+    ${q.status==='failed'?` <button class="ghost" style="padding:2px 10px" onclick="retryJob('${q.id}')">↻ повторить</button>`:''}
+    ${q.error?`<div class="muted">${esc(q.error)}</div>`:''}</td>
+    <td>${q.clips??'—'}</td></tr>`).join('') || '<tr><td colspan="4" class="muted">Очередь пуста</td></tr>';
+
+  $('clips').innerHTML = (S.clips||[]).slice(0,40).map(c=>`
+    <tr><td>${esc(c.title)}<div class="muted">${esc(c.source||'')} · ${c.duration||'?'}с</div></td>
+    <td>${c.score??'—'}</td><td>${esc(catName(c.category))}</td>
+    <td><span class="pill ${CLS[c.status]||''}">${RU[c.status]||c.status}</span></td></tr>`).join('')
+    || '<tr><td colspan="4" class="muted">Клипов пока нет — запусти нарезку</td></tr>';
+
+  // селекторы категорий (форма аккаунта + загрузка с YouTube)
+  const catOpts = (S.categories||[]).map(c=>`<option value="${c.key}">${esc(c.label)}</option>`).join('');
+  $('acc-cat').innerHTML = catOpts;
+  if ($('yt-cat').innerHTML === '') $('yt-cat').innerHTML = catOpts;
+  $('accs').innerHTML = (S.accounts||[]).map(a=>{
+    let plat;
+    if (a.platform === 'youtube') {
+      plat = a.yt_connected
+        ? '<span class="pill ok">🤖 YouTube авто</span>'
+        : `<span class="pill warn">YouTube не подключен</span>
+           <button class="ghost" style="padding:3px 10px;margin-left:6px"
+                   onclick="window.open('/auth/yt/start?id=${a.id}','_blank')">🔗 Подключить</button>`;
+    } else {
+      plat = '<span class="pill">✋ вручную</span>';
+    }
+    const warm = a.warmed
+      ? `<button class="ghost" style="padding:2px 10px" title="Кликни, если канал ещё не прогрет" onclick="warmAcc('${a.id}',false)">🔥 прогрет</button>`
+      : `<button class="ghost" style="padding:2px 10px" title="Кликни, когда выполнишь чек-лист прогрева" onclick="warmAcc('${a.id}',true)">🧊 не прогрет</button>`;
+    return `<tr><td>${esc(a.name)}</td><td>${esc(catName(a.category))}</td><td>${plat}</td>
+    <td>${a.posted}</td><td>${a.planned}</td>
+    <td><span class="pill ${a.health==='warn'?'warn':'ok'}">${a.health==='warn'?'⚠ тихо':'ок'}</span> ${warm}</td>
+    <td><button class="ghost" style="padding:4px 10px" onclick="delAcc('${a.id}')">✕</button></td></tr>`;
+  }).join('')
+    || '<tr><td colspan="7" class="muted">Добавь аккаунты — без них план не собрать</td></tr>';
+
+  // план
+  $('plan').innerHTML = (S.plan||[]).filter(p=>p.status!=='skipped').map(p=>{
+    const link = p.video_id ? ` <a href="https://youtu.be/${esc(p.video_id)}" target="_blank">▶ youtu.be/${esc(p.video_id)}</a>` : '';
+    const acc = (S.accounts||[]).find(a=>a.id===p.account_id);
+    let act = '';
+    if (p.status==='scheduled'||p.status==='notified') {
+      if (acc && acc.auto)
+        act += `<button class="ghost" style="padding:3px 10px" onclick="publishNow('${p.id}')">🚀 сейчас</button> `;
+      act += `<button class="ghost" style="padding:3px 10px" onclick="markPost('${p.id}','posted')">🟢 опубликовал</button>`;
+    }
+    return `<tr><td>${esc(p.date)}</td><td>${esc(p.slot)}</td><td>${esc(accName(p.account_id))}</td>
+    <td>${esc(clipTitle(p.clip_id))}${link}</td>
+    <td><span class="pill ${CLS[p.status]||''}">${RU[p.status]||p.status}</span></td>
+    <td>${act}</td></tr>`;
+  }).join('')
+    || '<tr><td colspan="6" class="muted">Плана нет. Одобри клипы в боте и нажми «Сформировать план»</td></tr>';
+
+  // статистика
+  $('stat-cards').innerHTML = (S.accounts||[]).map(a=>`
+    <div class="card"><h3>${esc(a.name)}</h3><hr class="goldline"/>
+    <div class="row" style="gap:26px">
+      <div><div class="num">${a.posted}</div><div class="muted">опубликовано</div></div>
+      <div><div class="num">${(a.total_views||0).toLocaleString('ru')}</div><div class="muted">просмотров</div></div>
+      <div><div class="num">${a.health==='warn'?'⚠':'✓'}</div><div class="muted">${a.health==='warn'?'возможен бан':'здоров'}</div></div>
+    </div></div>`).join('') || '<div class="card muted">Аккаунтов нет</div>';
+
+  const posted = (S.plan||[]).filter(p=>p.status==='posted');
+  $('stat-rows').innerHTML = posted.map(p=>{
+    const c=(S.clips||[]).find(c=>c.id===p.clip_id)||{};
+    return `<tr><td>${esc(c.title||p.clip_id)}</td><td>${esc(accName(p.account_id))}</td>
+      <td><input style="width:110px" type="number" id="v-${p.clip_id}" value="${c.views??''}" placeholder="—"/></td>
+      <td><input style="width:90px" type="number" id="l-${p.clip_id}" value="${c.likes??''}" placeholder="—"/></td>
+      <td><button class="ghost" style="padding:4px 12px" onclick="saveStats('${p.clip_id}')">💾</button></td></tr>`;
+  }).join('') || '<tr><td colspan="5" class="muted">Опубликованных пока нет</td></tr>';
+
+  // бустер
+  if (S.buster) {
+    const b = S.buster;
+    if (b.enabled === false) {
+      $('buster-head').innerHTML = '<div class="muted">Вертикаль выключена (buster_enabled=false в настройках завода).</div>';
+      $('buster-clips').innerHTML = '<tr><td colspan="6" class="muted">—</td></tr>';
+      $('buster-form-row').innerHTML = ''; $('buster-checklist').innerHTML = ''; $('buster-table').innerHTML = '';
+    } else {
+      const cur = b.currency || '$';
+      const accCards = (b.accounts||[]).map(a=>`<div><div class="num">${cur}${a.earned||0}</div>
+        <div class="muted">${esc(a.name)}${a.yt_connected?'':' · ⚠ не подключен'}</div></div>`).join('');
+      $('buster-head').innerHTML = `<div class="row" style="gap:30px;align-items:flex-end">
+        <div><div class="num" style="font-size:34px">${cur}${b.total_earned||0}</div><div class="muted">заработано всего</div></div>
+        ${accCards}
+        <div><div class="num">${b.accounts_count||0}/${b.max_accounts||2}</div><div class="muted">аккаунта (лимит)</div></div>
+      </div>`;
+      $('buster-clips').innerHTML = (b.clips||[]).map(c=>{
+        const dl = (typeof c.days_left==='number') ? (c.days_left>=0?`${c.days_left} дн`:'закрыто') : '—';
+        let badge;
+        if (c.submitted) badge = '<span class="pill ok">✅ сдан</span>';
+        else if (c.payout_due && c.payout>0) badge = '<span class="pill gold">💵 пора сдавать</span>';
+        else if (c.payout>0) badge = '<span class="pill warn">окно закрыто</span>';
+        else badge = '<span class="pill">рано</span>';
+        const act = (!c.submitted && c.payout>0)
+          ? `<button class="ghost" style="padding:3px 10px" onclick="busterSubmit('${esc(c.clip_id)}')">✅ сдал</button>` : '';
+        return `<tr><td>${esc(c.title)} ${badge}</td><td>${esc(c.account)}</td>
+          <td>${c.views!=null?Number(c.views).toLocaleString('ru'):'—'}</td>
+          <td>${c.payout>0?cur+c.payout:'—'}</td><td>${dl}</td><td>${act}</td></tr>`;
+      }).join('') || '<tr><td colspan="6" class="muted">Опубликованных buster-клипов пока нет</td></tr>';
+      $('buster-form-row').innerHTML = `<button onclick="window.open('${esc(b.form_url)}','_blank')">📝 Открыть форму выплаты</button>
+        <div class="muted">Заполни сам, потом отметь «✅ сдал». Вопросы: <b>${esc(b.contact)}</b></div>`;
+      $('buster-checklist').innerHTML = (b.checklist||[]).map(x=>`☐ ${esc(x)}`).join('<br/>');
+      const tbl = (b.table||[]).map(t=>`${Number(t[0]).toLocaleString('ru')}+ → ${cur}${t[1]}`).join(' &nbsp;·&nbsp; ');
+      $('buster-table').innerHTML = tbl ? `<b>Ставки:</b> ${tbl}<br/>Оплата по высшему достигнутому порогу, НЕ суммируется. Выплаты каждые 14 дней.` : '';
+    }
+  }
+}
+
+async function refresh(){ try{ S = await api('/state'); render(); }catch(e){} }
+
+async function startCat(cat){
+  const files=[...document.querySelectorAll(`input[data-cat="${cat}"]:checked:not(:disabled)`)].map(i=>i.dataset.f);
+  if(!files.length) return alert('Отметь файлы галочками');
+  const r = await api('/enqueue',{category:cat,files});
+  await refresh();
+  alert(`В очередь: ${r.queued}. Клипы прилетят в Telegram на одобрение.`);
+}
+function togglePlat(){
+  $('yt-fields').style.display = $('acc-platform').value==='youtube' ? '' : 'none';
+}
+async function addAcc(){
+  const name=$('acc-name').value.trim(); if(!name) return;
+  const platform=$('acc-platform').value;
+  const r=await api('/accounts/add',{name,category:$('acc-cat').value,platform,
+    yt_client_id:$('yt-cid').value.trim(), yt_client_secret:$('yt-csec').value.trim()});
+  if(r.error) return alert(r.error);
+  $('acc-name').value='';
+  if(platform==='youtube' && r.id){
+    if(confirm('Аккаунт добавлен. Подключить YouTube сейчас? (войди в Google этого канала)'))
+      window.open('/auth/yt/start?id='+r.id,'_blank');
+  }
+  refresh();
+}
+async function delAcc(id){ if(confirm('Удалить аккаунт? (план для него очистится)')){ await api('/accounts/del',{id}); refresh(); } }
+async function buildPlan(){
+  const r=await api('/plan/build',{});
+  let msg = r.planned ? `Запланировано постов: ${r.planned}` : 'Нечего планировать: нужны одобренные клипы и аккаунты той же категории';
+  if (r.unwarmed) msg += `\n⚠ Пропущено непрогретых аккаунтов: ${r.unwarmed} (отметь «🔥 прогрет», когда выполнишь чек-лист)`;
+  alert(msg); refresh();
+}
+async function markPost(id,status){ await api('/post/mark',{plan_id:id,status}); refresh(); }
+async function publishNow(id){
+  if(!confirm('Опубликовать на YouTube прямо сейчас?')) return;
+  const r=await api('/post/publish',{plan_id:id});
+  if(r.error) alert(r.error); refresh();
+}
+async function retryJob(id){ const r=await api('/queue/retry',{id}); if(r.error) alert(r.error); refresh(); }
+async function warmAcc(id,warmed){ await api('/accounts/warm',{id,warmed}); refresh(); }
+async function downloadYt(){
+  const url=$('yt-url').value.trim(); if(!url) return alert('Вставь ссылку на YouTube');
+  const r=await api('/download',{url,category:$('yt-cat').value});
+  if(r.error) return alert(r.error);
+  if(!r.ok) return alert('Сервер не принял ссылку — перезапусти CLIPPER.bat и попробуй снова.');
+  $('yt-url').value='';
+  alert('В очереди: скачается в лучшем качестве и нарежется. Клипы прилетят в Telegram.');
+  refresh();
+}
+async function saveStats(cid){
+  const v=parseInt($('v-'+cid).value||'0',10), l=parseInt($('l-'+cid).value||'',10);
+  await api('/stats/set',{clip_id:cid,views:v,likes:isNaN(l)?null:l}); refresh();
+}
+async function busterSubmit(cid){ await api('/buster/submit',{clip_id:cid,submitted:true}); refresh(); }
+
+refresh(); setInterval(refresh, 3000);
+</script>
+</body>
+</html>

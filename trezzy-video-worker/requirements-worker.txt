@@ -1,0 +1,12 @@
+# OPTIONAL — heavy deps for render_mode="worker" ONLY (trezzy-video-worker/main.py).
+# NOT installed by START.bat. The dashboard's fast / avatar / clip modes do NOT
+# need these (they render in the API process).
+#
+# Python 3.13 caveat: numpy 1.26.4 has no cp313 wheel and moviepy 1.0.3 uses the
+# old numpy API + the `moviepy.editor` module removed in moviepy 2.x. So the heavy
+# worker is best run on Python 3.11, OR the worker code adapted for moviepy 2.x.
+#
+# To enable the heavy worker manually:
+#   trezzy-video-worker\.venv\Scripts\python.exe -m pip install -r requirements-worker.txt
+moviepy==1.0.3
+numpy==1.26.4

@@ -1,0 +1,16 @@
+# Core deps — API + dashboard + fast/avatar/CLIP render modes.
+# Wheel-only versions that install cleanly on Python 3.11–3.13 with NO source
+# build (this matters: numpy 1.26 has no cp313 wheel and its source build also
+# breaks on non-ASCII install paths like "контент завод"). Keep it wheel-only.
+fastapi==0.115.0
+uvicorn==0.30.6
+pydantic==2.9.2
+python-dotenv==1.0.1
+pillow>=11.0.0
+imageio-ffmpeg>=0.5.1
+opencv-python-headless>=4.10.0   # clip mode: face-aware 9:16 crop (also brings numpy as a wheel)
+
+# NOTE: the heavy HTTP worker (render_mode="worker") additionally needs moviepy +
+# an older numpy — those are OPTIONAL and live in requirements-worker.txt because
+# they don't install cleanly on Python 3.13. Everything the dashboard uses
+# (fast / avatar / clip) runs in the API process and does NOT need them.

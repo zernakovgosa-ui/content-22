@@ -1,0 +1,32 @@
+{
+  "instagram": [
+    {
+      "id": "ig_trezzy_main",
+      "handle": "@trezzy.parfum",
+      "display_name": "TREZZY",
+      "status": "mock_connected",
+      "api_key": "",
+      "notes": "Main brand account. Replace api_key with a real Instagram Graph API token to enable posting."
+    }
+  ],
+  "tiktok": [
+    {
+      "id": "tt_trezzy_main",
+      "handle": "@trezzy.shop",
+      "display_name": "TREZZY",
+      "status": "needs_api_key",
+      "api_key": "",
+      "notes": "Connect via TikTok Content Posting API once approved."
+    }
+  ],
+  "youtube": [
+    {
+      "id": "yt_trezzy_shorts",
+      "handle": "@trezzy",
+      "display_name": "TREZZY Shorts",
+      "status": "needs_api_key",
+      "api_key": "",
+      "notes": "Needs YouTube Data API OAuth client."
+    }
+  ]
+}

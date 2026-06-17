@@ -1,0 +1,50 @@
+# ── СЕКРЕТЫ (никогда не коммитить!) ──────────────────────────────
+data/settings.json
+**/settings.local.json
+.env
+*.token
+*.tokens
+**/oauth*.json
+**/credentials*.json
+**/client_secret*.json
+
+# ── Runtime-состояние (генерится на сервере) ─────────────────────
+clipper/data/
+clipper/sources/
+clipper/output/
+output/
+!output/.gitkeep
+
+# ── Питон-окружения / кэши ───────────────────────────────────────
+.venv/
+**/.venv/
+**/venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+
+# ── Тяжёлые медиа (в гит не нужны) ───────────────────────────────
+*.mp4
+*.mov
+*.mkv
+*.webm
+*.avi
+*.mp3
+*.m4a
+*.wav
+*.flac
+assets/music/
+assets/video/
+
+# ── Винда-бинарь ffmpeg (на линуксе бесполезен) ──────────────────
+**/bin/ffmpeg.exe
+**/data/bin/
+
+# ── Node / прочее ────────────────────────────────────────────────
+node_modules/
+*.log
+.DS_Store
+Thumbs.db
+*.zip

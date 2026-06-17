@@ -1,0 +1,23 @@
+{
+  "style": "premium_luxury",
+  "use_assets": true,
+  "fallback_animated_background": true,
+  "max_words_per_screen": 6,
+  "enable_particles": true,
+  "enable_vignette": true,
+  "enable_music": true,
+  "music_volume": 0.35,
+  "scene_durations": {
+    "hook":              2.4,
+    "spokesperson":      2.2,
+    "product_vibe":      3.4,
+    "proof_feeling":     2.8,
+    "cta":               2.6,
+    "ugc_chunk":         1.4,
+    "premium_main":      5.2
+  },
+  "fade_seconds":         0.30,
+  "ugc_fade_seconds":     0.12,
+  "safe_margin_px":       96,
+  "fps":                  30
+}

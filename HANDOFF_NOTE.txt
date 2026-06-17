@@ -1,0 +1,13 @@
+﻿TREZZY Content Factory handoff package
+Created: 20260602-044747
+Root source: C:\trezzy-content-factory
+
+This ZIP intentionally excludes heavy/generated files:
+- .venv
+- node_modules
+- output videos
+- mp4/mov/mp3 assets
+- caches
+
+Use it in Claude/Cloud AI together with the handoff prompt.
+Main objective: fix local fast renderer so scripts/test_full_pipeline.ps1 returns success without worker timeout.

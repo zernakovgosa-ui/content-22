@@ -1,0 +1,62 @@
+# ============================================================================
+#  Своя cobalt-качалка для клиппера.  Поднимать на VPS ВНЕ РФ.
+#  Решает СРАЗУ две задачи:
+#    1) обход РФ-DPI  — клиппер коннектится к ТВОЕМУ домену/IP, а не к googlevideo;
+#    2) обход YouTube-бота — poToken генерится сайдкаром на IP этого же VPS.
+#
+#  Три сервиса:
+#    cobalt                — сам API-качалка (порт 9000)
+#    yt-session-generator  — выдаёт poToken/visitor_data (без него датацентровый
+#                            IP ловит "error.api.youtube.login")
+#    watchtower            — авто-обновление образов раз в 15 мин
+#
+#  Запуск (из этой папки на VPS):  docker compose up -d
+#  Логи:                           docker compose logs -f cobalt
+# ============================================================================
+services:
+  cobalt:
+    image: ghcr.io/imputnet/cobalt:11
+    init: true
+    read_only: true
+    restart: unless-stopped
+    container_name: cobalt
+    ports:
+      - "9000:9000/tcp"
+    environment:
+      # ⬇️⬇️⬇️ ЗАМЕНИ на адрес своей качалки.
+      #   без домена (быстрый старт):  http://IP_ТВОЕГО_VPS:9000/
+      #   с доменом (HTTPS, см. README): https://cobalt.твойдомен.ru/
+      API_URL: "http://CHANGE_ME_VPS_IP:9000/"
+
+      # Обход YouTube-бота. poToken генерится сайдкаром НА ЭТОМ ЖЕ публичном IP —
+      # иначе YouTube отдаёт "login required". НЕ удаляй эту строку.
+      YOUTUBE_SESSION_SERVER: "http://yt-session-generator:8080/"
+
+      # Доступ только по ключу (твой клиппер шлёт его в заголовке Authorization).
+      # Без этого качалка публичная — её найдут боты и засрут лимиты/трафик.
+      API_KEY_URL: "file:///keys.json"
+      API_AUTH_REQUIRED: "1"
+
+      # Лимиты под твой кейс: ролики до 5 ч (фильмы) + помягче рейт, инстанс личный.
+      DURATION_LIMIT: "18000"
+      RATELIMIT_MAX: "200"
+      TUNNEL_RATELIMIT_MAX: "200"
+    volumes:
+      - ./keys.json:/keys.json:ro
+    labels:
+      - com.centurylinklabs.watchtower.scope=cobalt
+
+  yt-session-generator:
+    image: ghcr.io/imputnet/yt-session-generator:webserver
+    init: true
+    restart: unless-stopped
+    container_name: yt-session-generator
+    labels:
+      - com.centurylinklabs.watchtower.scope=cobalt
+
+  watchtower:
+    image: ghcr.io/containrrr/watchtower
+    restart: unless-stopped
+    command: --cleanup --scope cobalt --interval 900 --include-restarting
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock

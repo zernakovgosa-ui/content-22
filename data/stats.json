@@ -1,0 +1,43 @@
+{
+  "updated_at": "2026-06-09T21:25:36+00:00",
+  "totals": {
+    "videos_generated": 5,
+    "views": 18420,
+    "likes": 1340,
+    "saves": 287,
+    "comments": 96,
+    "ctr_percent": 4.1
+  },
+  "platforms": [
+    {
+      "platform": "instagram",
+      "videos": 0,
+      "views": 9100,
+      "likes": 720,
+      "saves": 168,
+      "comments": 52,
+      "ctr_percent": 4.3,
+      "source": "mock"
+    },
+    {
+      "platform": "tiktok",
+      "videos": 0,
+      "views": 7320,
+      "likes": 510,
+      "saves": 89,
+      "comments": 31,
+      "ctr_percent": 3.9,
+      "source": "mock"
+    },
+    {
+      "platform": "youtube",
+      "videos": 0,
+      "views": 2000,
+      "likes": 110,
+      "saves": 30,
+      "comments": 13,
+      "ctr_percent": 3.6,
+      "source": "mock"
+    }
+  ]
+}
