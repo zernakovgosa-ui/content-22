@@ -814,7 +814,16 @@ def render_clips(
     import concurrent.futures as _fut
     with _fut.ThreadPoolExecutor(max_workers=2) as pool:
         futures = [pool.submit(_do_moment, i, m) for i, m in enumerate(moments, start=1)]
-        results = [f.result() for f in futures]
+        # Одна упавшая нарезка НЕ должна ронять весь батч: f.result() ре-кидает
+        # исключение воркера. Ловим поштучно → битый момент становится None и
+        # отфильтруется ниже (ровно задокументированное «failed clips are skipped»).
+        results = []
+        for f in futures:
+            try:
+                results.append(f.result())
+            except Exception as e:
+                print(f"[clip] момент упал с исключением, пропускаю: {str(e)[:120]}", flush=True)
+                results.append(None)
     rendered: List[Dict[str, Any]] = sorted(
         (r for r in results if r), key=lambda r: r["index"])
 

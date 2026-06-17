@@ -3,7 +3,7 @@
 
 No IO, no network: everything here is deterministic and unit-testable.
 
-  auto_clip_count()  — owner's rule: 2 clips per 10 minutes of source (min 2)
+  auto_clip_count()  — owner's rule: 3 clips per 10 minutes of source (min 3)
   distribute()       — spread approved clips EVENLY across a category's accounts
   build_schedule()   — turn assignments into a day-by-day plan (max 2 posts/day
                        per account, steady every day until the backlog is done)
@@ -55,9 +55,15 @@ def days_left_to_payout(posted_at_iso: Optional[str], window_days: int,
         return None
     try:
         dt = datetime.fromisoformat(posted_at_iso)
+        # posted_at может нести смещение («…+00:00»), а now обычно наивный →
+        # вычитание разнотипных datetime бросает TypeError и роняет выплаты.
+        # Сравниваем оба как наивные (для счёта в ДНЯХ смещение несущественно).
+        if dt.tzinfo is not None:
+            dt = dt.replace(tzinfo=None)
+        base = now.replace(tzinfo=None) if now.tzinfo is not None else now
+        elapsed = (base - dt).total_seconds() / 86400.0
     except Exception:
         return None
-    elapsed = (now - dt).total_seconds() / 86400.0
     return int(round(window_days - elapsed))
 
 
@@ -86,7 +92,7 @@ def buster_earnings(clips: Dict[str, Dict[str, Any]], plan: Sequence[Dict[str, A
         if clip.get("category") != category:
             continue
         views = clip.get("views")
-        payout = payout_for_views(views, table) if isinstance(views, int) else 0
+        payout = payout_for_views(views, table)   # сам валидирует int/float/мусор
         acc_id = p.get("account_id")
         by_account[acc_id] = by_account.get(acc_id, 0) + payout
         total += payout

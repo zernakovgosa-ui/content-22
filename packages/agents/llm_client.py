@@ -61,6 +61,11 @@ def _post(url: str, headers: dict, payload: dict, timeout: int = 60) -> dict:
             if attempt < 3:
                 time.sleep(5 * attempt)
                 continue
+        except ValueError as e:   # 200, но тело не JSON (HTML-заглушка CF/шлюза) → ретрай
+            last_err = f"не-JSON ответ ({str(e)[:50]})"
+            if attempt < 3:
+                time.sleep(5 * attempt)
+                continue
     raise LLMError(f"unreachable after 3 tries: {last_err}")
 
 
@@ -107,6 +112,11 @@ def _post_groq(payload: dict, fallback_key: str = "", timeout: int = 60) -> dict
             raise LLMError(f"HTTP {e.code}: {detail or e.reason}")
         except (urllib.error.URLError, TimeoutError, OSError) as e:
             last_err = str(e)
+            if t < tries - 1:
+                time.sleep(4)
+                continue
+        except ValueError as e:   # 200, но тело не JSON → следующий круг/ключ
+            last_err = f"не-JSON ответ ({str(e)[:50]})"
             if t < tries - 1:
                 time.sleep(4)
                 continue
@@ -161,9 +171,12 @@ def complete(
             headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
             res = _post(OPENAI_URL, headers, payload)
         choices = res.get("choices", [])
-        if not choices:
-            raise LLMError(f"empty {provider} response: {res}")
-        return (choices[0].get("message", {}).get("content") or "").strip()
+        text = ((choices[0].get("message", {}).get("content") if choices else "") or "").strip()
+        if not text:
+            # Groq на бесплатном тарифе порой отдаёт 200 с пустым content — это НЕ
+            # валидный ответ. Бросаем, чтобы сработал ретрай/фолбэк, а не пустой текст.
+            raise LLMError(f"empty {provider} response: {str(res)[:300]}")
+        return text
 
     raise LLMError(f"unknown provider: {provider}")
 

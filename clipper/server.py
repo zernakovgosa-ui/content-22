@@ -1300,8 +1300,16 @@ def _startup():
         # версии могли оставить и 'failed' в плане — это тупик без кнопок,
         # мигрируем обратно в расписание.
         for p in st["plan"]:
-            if p.get("status") in ("publishing", "failed"):
+            # 'failed' — ролик НЕ постился, можно спокойно вернуть в расписание.
+            if p.get("status") == "failed":
                 p["status"] = "scheduled"
+            # 'publishing' — аплоад был В ПРОЦЕССЕ при падении и МОГ уже залиться.
+            # Авто-повтор создал бы ДУБЛЬ публичного ролика, поэтому уводим в
+            # ручной режим: владелец сам решит (запостить/пропустить) из дашборда.
+            elif p.get("status") == "publishing":
+                p["status"] = "notified"
+                p.pop("attempts", None)
+                p.pop("next_try", None)
             # Якорь 14-дневного окна выплаты для уже опубликованных (старые записи).
             if p.get("status") == "posted" and not p.get("posted_at"):
                 p["posted_at"] = p.get("marked_at") or datetime.now().isoformat(timespec="seconds")
