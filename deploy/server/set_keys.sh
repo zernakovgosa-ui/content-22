@@ -16,9 +16,16 @@ echo " Значения бери из своего локального файл
 echo "================================================================"
 read -rp "Telegram bot token        : " TG_TOKEN
 read -rp "Telegram chat id          : " TG_CHAT
-echo "Groq: можно вставить СРАЗУ НЕСКОЛЬКО ключей через пробел или запятую"
-echo "(пул ротируется при лимитах бесплатного Groq — чем больше, тем лучше)."
-read -rp "Groq API keys             : " GROQ
+echo "── Groq-ключи: вставляй ПО ОДНОМУ (каждый + Enter). Пустой Enter = закончить. ──"
+echo "   (по одному, потому что длинная строка из всех ключей рубится в консоли)"
+GROQ=""
+gi=1
+while true; do
+  read -rp "Groq ключ #$gi (пустой Enter = хватит): " gk
+  [ -z "$gk" ] && break
+  GROQ="$GROQ $gk"
+  gi=$((gi + 1))
+done
 read -rp "Pexels API key (необяз.)  : " PEXELS
 
 TG_TOKEN="$TG_TOKEN" TG_CHAT="$TG_CHAT" GROQ="$GROQ" PEXELS="$PEXELS" \
