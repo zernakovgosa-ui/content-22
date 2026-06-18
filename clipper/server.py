@@ -122,6 +122,14 @@ def _tg_creds() -> tuple:
     return (s.get("telegram_bot_token") or "", str(s.get("telegram_chat_id") or ""))
 
 
+def _yt_redirect() -> str:
+    """OAuth redirect URI. Если в settings задан public_base_url (HTTPS-домен сервера) —
+    Google вернёт код прямо на наш /auth/yt/callback, БЕЗ ручного копирования. Иначе
+    откатываемся на loopback localhost:8002 (старое поведение)."""
+    base = (_settings().get("public_base_url") or "").strip().rstrip("/")
+    return f"{base}/auth/yt/callback" if base else YT_REDIRECT
+
+
 def _now_hm() -> str:
     return datetime.now().strftime("%H:%M")
 
@@ -1293,7 +1301,7 @@ def yt_auth_start(id: str):
     acc = next((a for a in st["accounts"] if a["id"] == id), None)
     if not acc or acc.get("platform") != "youtube" or not acc.get("yt", {}).get("client_id"):
         return JSONResponse({"error": "аккаунт не найден или не YouTube"}, status_code=400)
-    url = yt.build_auth_url(acc["yt"]["client_id"], YT_REDIRECT, state=id)
+    url = yt.build_auth_url(acc["yt"]["client_id"], _yt_redirect(), state=id)
     return RedirectResponse(url)
 
 
@@ -1307,7 +1315,7 @@ def yt_auth_callback(state: str = "", code: str = "", error: str = ""):
         return HTMLResponse("<h3>❌ Аккаунт не найден</h3>", status_code=404)
     try:
         tokens = yt.exchange_code(acc["yt"]["client_id"], acc["yt"]["client_secret"],
-                                  code, YT_REDIRECT)
+                                  code, _yt_redirect())
     except Exception as e:
         return HTMLResponse(f"<h3>❌ Ошибка обмена кода: {str(e)[:300]}</h3>", status_code=500)
     with _LOCK:
@@ -1341,7 +1349,7 @@ def yt_auth_manual(body: YtManualIn):
         return JSONResponse({"error": "не нашёл код — вставь адрес целиком"}, status_code=400)
     try:
         tokens = yt.exchange_code(acc["yt"]["client_id"], acc["yt"]["client_secret"],
-                                  code, YT_REDIRECT)
+                                  code, _yt_redirect())
     except Exception as e:
         return JSONResponse({"error": f"обмен кода не удался: {str(e)[:200]}"}, status_code=500)
     with _LOCK:
