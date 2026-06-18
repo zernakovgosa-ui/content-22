@@ -97,12 +97,12 @@ def _post_groq(payload: dict, fallback_key: str = "", timeout: int = 60) -> dict
                 detail = e.read().decode("utf-8", errors="replace")[:300]
             except Exception:
                 pass
-            if e.code == 429:                       # лимит ключа → следующий ключ
-                last_err = f"429 (ключ …{key[-4:]})"
+            if e.code in (429, 401, 403):           # лимит ИЛИ битый/запрещённый ключ → следующий
+                last_err = f"HTTP {e.code} (ключ …{key[-4:]})"
                 if groq_pool and pool_keys and groq_pool.count() > 1:
                     groq_pool.rotate()
-                print("[groq] лимит ключа — переключаюсь на следующий", flush=True)
-                if t >= len(keys) - 1:              # обошли все → пауза перед новым кругом
+                print(f"[groq] HTTP {e.code} (лимит/битый ключ) — следующий ключ", flush=True)
+                if t >= len(keys) - 1 and e.code == 429:   # обошли все → пауза (только при лимите)
                     time.sleep(5)
                 continue
             if e.code in (500, 502, 503, 504) and t < tries - 1:

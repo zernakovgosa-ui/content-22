@@ -263,15 +263,18 @@ def _transcribe_openai_compatible(
                 detail = e.read().decode("utf-8", errors="replace")[:400]
             except Exception:
                 pass
-            if e.code == 429:                          # лимит ключа → следующий ключ
-                last_err = f"429 (ключ {ki % len(keys) + 1}/{len(keys)})"
+            if e.code in (429, 401, 403):              # лимит ИЛИ битый/запрещённый ключ → следующий
+                tag = "лимит" if e.code == 429 else "битый ключ"
+                last_err = f"HTTP {e.code} (ключ {ki % len(keys) + 1}/{len(keys)}, {tag})"
                 ki += 1
                 if ki % len(keys) != 0:                # есть ещё неиспробованные ключи — без паузы
-                    print("[stt] лимит ключа — пробую следующий Groq-ключ", flush=True)
+                    print(f"[stt] {tag} (HTTP {e.code}) — пробую следующий Groq-ключ", flush=True)
                     continue
-                print("[stt] все ключи в лимите — пауза перед новым кругом", flush=True)
-                time.sleep(8)
-                continue
+                if e.code == 429:                      # все ключи в лимите — пауза перед кругом
+                    print("[stt] все ключи в лимите — пауза перед новым кругом", flush=True)
+                    time.sleep(8)
+                    continue
+                raise RuntimeError(f"все Groq-ключи битые (HTTP {e.code}): {detail or e.reason}")
             if e.code in (500, 502, 503, 504) and attempt < max_tries:
                 last_err = f"HTTP {e.code}"
                 time.sleep(6)
