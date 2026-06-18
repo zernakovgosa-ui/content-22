@@ -348,13 +348,8 @@ async function saveCpm(){
 
 async function ytConnect(id){
   window.open('/auth/yt/start?id='+id,'_blank');
-  const paste = prompt('Войди в Google ЭТОГО канала.\nGoogle перекинет на адрес localhost:8002 — страница НЕ откроется, это нормально.\nСкопируй ВЕСЬ адрес из адресной строки и вставь сюда:');
-  if(!paste) return;
-  try{
-    const r = await api('/auth/yt/manual', {id, paste});
-    alert(r && r.ok ? '✅ Канал подключён, автопостинг активен!' : ('❌ '+((r&&r.error)||'не вышло')));
-  }catch(e){ alert('❌ ошибка: '+e); }
-  refresh();
+  alert('Откроется вкладка Google.\n1) Войди в аккаунт ИМЕННО ЭТОГО канала\n2) Нажми «Разрешить»\nДальше та вкладка сама покажет «✅ Канал подключен» — копировать ничего не надо.\nПотом вернись сюда, статус обновится сам.');
+  setTimeout(refresh, 3000);
 }
 
 async function startCat(cat){
