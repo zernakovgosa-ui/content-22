@@ -232,6 +232,8 @@ function render(){
     <tr><td>${esc(q.file)}</td><td>${esc(catName(q.category))}</td>
     <td><span class="pill ${CLS[q.status]||''}">${RU[q.status]||q.status}</span>
     ${q.status==='failed'?` <button class="ghost" style="padding:2px 10px" onclick="retryJob('${q.id}')">↻ повторить</button>`:''}
+    ${(q.status==='pending'||q.status==='processing')?` <button class="ghost" style="padding:2px 10px" onclick="cancelJob('${q.id}')" title="Остановить и убрать">✕ отмена</button>`:''}
+    ${(q.status==='done'||q.status==='failed')?` <button class="ghost" style="padding:2px 8px" onclick="cancelJob('${q.id}')" title="Убрать из списка">✕</button>`:''}
     ${q.error?`<div class="muted">${esc(q.error)}</div>`:''}</td>
     <td>${q.clips??'—'}</td></tr>`).join('') || '<tr><td colspan="4" class="muted">Очередь пуста</td></tr>';
 
@@ -275,8 +277,9 @@ function render(){
     if (p.status==='scheduled'||p.status==='notified') {
       if (acc && acc.auto)
         act += `<button class="ghost" style="padding:3px 10px" onclick="publishNow('${p.id}')">🚀 сейчас</button> `;
-      act += `<button class="ghost" style="padding:3px 10px" onclick="markPost('${p.id}','posted')">🟢 опубликовал</button>`;
+      act += `<button class="ghost" style="padding:3px 10px" onclick="markPost('${p.id}','posted')">🟢 опубликовал</button> `;
     }
+    act += `<button class="ghost" style="padding:3px 9px" onclick="delPlan('${p.id}')" title="Убрать этот шортс из плана">✕</button>`;
     return `<tr><td>${esc(p.date)}</td><td>${esc(p.slot)}</td><td>${esc(accName(p.account_id))}</td>
     <td>${esc(clipTitle(p.clip_id))}${link}</td>
     <td><span class="pill ${CLS[p.status]||''}">${RU[p.status]||p.status}</span></td>
@@ -390,6 +393,8 @@ async function publishNow(id){
   if(r.error) alert(r.error); refresh();
 }
 async function retryJob(id){ const r=await api('/queue/retry',{id}); if(r.error) alert(r.error); refresh(); }
+async function delPlan(id){ await api('/plan/remove',{id}); refresh(); }
+async function cancelJob(id){ if(confirm('Остановить/убрать эту задачу? Недокачанный файл удалится.')){ await api('/queue/cancel',{id}); refresh(); } }
 async function warmAcc(id,warmed){ await api('/accounts/warm',{id,warmed}); refresh(); }
 async function downloadYt(){
   const url=$('yt-url').value.trim(); if(!url) return alert('Вставь ссылку на YouTube');

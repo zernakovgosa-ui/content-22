@@ -79,6 +79,7 @@ VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v"}
 
 _LOCK = threading.RLock()
 _STATE_CACHE: Optional[Dict[str, Any]] = None
+_CANCEL: set = set()        # id задач на отмену — воркер их прибирает (исходник + темп)
 
 
 # ----------------------------------------------------------------------------
@@ -414,6 +415,22 @@ def _process_video(item: Dict[str, Any]) -> None:
             print(f"[clipper] не смог удалить исходник: {str(e)[:80]}", flush=True)
 
 
+def _finish_cancel(job: Dict[str, Any]) -> None:
+    """Прибрать отменённую задачу: удалить недокачанный/нарезанный исходник и саму
+    запись из очереди. Темп воркеров чистится их собственными finally."""
+    try:
+        f = job.get("file")
+        if f:
+            (SOURCES_DIR / CAT_FOLDER[job["category"]] / f).unlink(missing_ok=True)
+    except Exception:
+        pass
+    with _LOCK:
+        st = _load_state()
+        st["queue"] = [q for q in st["queue"] if q.get("id") != job.get("id")]
+        _CANCEL.discard(job.get("id"))
+        _save_state()
+
+
 def _worker_loop() -> None:
     while True:
         st = _load_state()
@@ -429,13 +446,17 @@ def _worker_loop() -> None:
             time.sleep(3)
             continue
         try:
+            if job["id"] in _CANCEL:
+                _finish_cancel(job)
+                continue
             # Источник — ссылка YouTube: сначала качаем (лучшее ≤1080p),
             # описание ролика станет контекстом для названий шортсов.
             if job.get("url") and not job.get("downloaded"):
                 from clipper.downloader import download_youtube
                 print(f"[clipper] качаю с YouTube: {job['url']}", flush=True)
                 dl = download_youtube(job["url"], SOURCES_DIR / CAT_FOLDER[job["category"]],
-                                      settings=_settings())
+                                      settings=_settings(),
+                                      should_cancel=lambda jid=job["id"]: jid in _CANCEL)
                 with _LOCK:
                     job["file"] = dl["file"]
                     job["src_title"] = dl["title"]
@@ -443,12 +464,19 @@ def _worker_loop() -> None:
                     job["downloaded"] = True
                     _save_state()
                 print(f"[clipper] скачано: {dl['file']} ({dl.get('duration')}с)", flush=True)
+            if job["id"] in _CANCEL:               # отмена между скачиванием и нарезкой
+                _finish_cancel(job)
+                continue
             _process_video(job)
             with _LOCK:
                 job["status"] = "done"
                 _save_state()
             print(f"[clipper] {job['file']}: готово, клипов: {job.get('clips')}", flush=True)
         except Exception as e:
+            if job["id"] in _CANCEL:               # упало из-за отмены — это не ошибка
+                _finish_cancel(job)
+                print(f"[clipper] задача отменена: {job.get('file') or job.get('url')}", flush=True)
+                continue
             with _LOCK:
                 job["status"] = "failed"
                 job["error"] = str(e)[:300]
@@ -1269,6 +1297,34 @@ def queue_retry(body: RetryIn):
         q.pop("error", None)
         _save_state()
     return {"ok": True}
+
+
+@app.post("/queue/cancel")
+def queue_cancel(body: RetryIn):
+    """Отменить задачу: pending/failed/done — убрать из очереди; processing —
+    пометить на отмену (воркер остановит скачивание/нарезку и приберёт исходник)."""
+    st = _load_state()
+    q = next((x for x in st["queue"] if x["id"] == body.id), None)
+    if not q:
+        return {"ok": True}
+    if q["status"] == "processing":
+        _CANCEL.add(body.id)
+        return {"ok": True, "state": "останавливаю"}
+    with _LOCK:
+        st["queue"] = [x for x in st["queue"] if x["id"] != body.id]
+        _save_state()
+    return {"ok": True, "state": "убрано"}
+
+
+@app.post("/plan/remove")
+def plan_remove(body: RetryIn):
+    """Удалить ОДНУ запись плана (конкретный шортс), остальные не трогаем."""
+    with _LOCK:
+        st = _load_state()
+        before = len(st["plan"])
+        st["plan"] = [p for p in st["plan"] if p.get("id") != body.id]
+        _save_state()
+    return {"ok": True, "removed": before - len(st["plan"])}
 
 
 class PublishIn(BaseModel):

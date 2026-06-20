@@ -498,7 +498,8 @@ _METHODS = {"cobalt": _via_cobalt, "invidious": _via_invidious, "piped": _via_pi
 
 
 def download_youtube(url: str, dest_dir: str | Path, progress_cb=None,
-                     settings: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+                     settings: Optional[Dict[str, Any]] = None,
+                     should_cancel=None) -> Dict[str, Any]:
     """Скачать ролик → {"path","file","title","description","duration"}.
 
     Перебирает цепочку методов (settings["yt_download_chain"] или DEFAULT_CHAIN).
@@ -513,6 +514,8 @@ def download_youtube(url: str, dest_dir: str | Path, progress_cb=None,
     last_ytdlp_err = ""
 
     for method in chain:
+        if should_cancel and should_cancel():
+            raise RuntimeError("отменено пользователем")
         try:
             if method == "ytdlp":
                 return _via_ytdlp(url, dest_dir, settings, progress_cb)
