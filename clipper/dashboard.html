@@ -243,7 +243,8 @@ function render(){
 
   // селекторы категорий (форма аккаунта + загрузка с YouTube)
   const catOpts = (S.categories||[]).map(c=>`<option value="${c.key}">${esc(c.label)}</option>`).join('');
-  $('acc-cat').innerHTML = catOpts;
+  // ВАЖНО: заполняем один раз, иначе авто-обновление каждые 3с сбрасывает выбор на «Видосы».
+  if ($('acc-cat').innerHTML === '') $('acc-cat').innerHTML = catOpts;
   if ($('yt-cat').innerHTML === '') $('yt-cat').innerHTML = catOpts;
   $('accs').innerHTML = (S.accounts||[]).map(a=>{
     let plat;
