@@ -7,8 +7,13 @@
 #  Запуск:  bash /opt/content/deploy/server/enable_https.sh
 # ============================================================================
 set -e
-DOMAIN="v629352.hosted-by-vdsina.com"
+# Домен для HTTPS: если задан HTTPS_DOMAIN — берём его; иначе авто через sslip.io
+# (<публичный-ip>.sslip.io резолвится в этот же IP, Let's Encrypt выписывает на него
+# сертификат) — работает на ЛЮБОМ сервере без покупки домена.
+PUBIP="$(curl -fsS https://api.ipify.org 2>/dev/null || hostname -I | awk '{print $1}')"
+DOMAIN="${HTTPS_DOMAIN:-${PUBIP}.sslip.io}"
 export DEBIAN_FRONTEND=noninteractive
+echo "HTTPS-домен: $DOMAIN"
 
 echo "==> [1/6] фаервол: открыть 443"
 (command -v ufw >/dev/null && ufw status | grep -qi active) && ufw allow 443/tcp || true
