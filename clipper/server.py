@@ -233,7 +233,7 @@ def _polish_meta(clip: Dict[str, Any]) -> Dict[str, Any]:
     # TREZZY-вертикаль: парфюм/косметика. РАЗНЫЕ (но стабильные на клип) хештеги +
     # CTA в описании с партнёрской ссылкой. Текстовый CTA на самом видео рисует рендер.
     if clip.get("category") == TREZZY_CAT:
-        seed = f"{clip.get('title','')}|{clip.get('start','')}|{clip.get('end','')}"
+        seed = f"{clip.get('id','')}|{clip.get('title','')}|{clip.get('duration','')}"
         pool = TREZZY_HASHTAG_POOL[:]
         random.Random(seed).shuffle(pool)
         tags = (["#trezzy", "#shorts"] + pool[:4])[:6]
@@ -296,7 +296,8 @@ def _llm_polish_clips(clips: List[Dict[str, Any]], source_name: str, cat_label: 
             "hashtags (4-6, первым #shorts). Отвечай ТОЛЬКО валидным JSON.")
         desc_block = f"\nОписание исходного ролика (используй как контекст):\n{src_desc[:700]}\n" \
             if src_desc else ""
-        user = (f"Источник: {source_name} (категория: {cat_label}).{desc_block} Клипы:\n{lines}\n\n"
+        user = (f"Источник: {source_name} (категория: {cat_label}).{desc_block} "
+                f"Клипов: {len(clips)} — верни РОВНО {len(clips)} items.\nКлипы:\n{lines}\n\n"
                 'Ответь JSON: {"items": [{"n": 1, "title": "...", "description": "...", '
                 '"hashtags": ["#shorts", "..."]}]}. Поле "n" — НОМЕР клипа из списка выше '
                 '(1, 2, 3...), по элементу на КАЖДЫЙ клип, n обязан совпадать с номером клипа.')
@@ -310,13 +311,20 @@ def _llm_polish_clips(clips: List[Dict[str, Any]], source_name: str, cat_label: 
             # дали — оставляем пусто, _polish_meta строит заголовок из хука клипа.
             by_n: Dict[int, Dict[str, Any]] = {}
             for it in items:
-                if isinstance(it, dict):
-                    try:
-                        by_n[int(it.get("n"))] = it
-                    except (TypeError, ValueError):
-                        pass
+                if not isinstance(it, dict):
+                    continue
+                try:
+                    n = int(it.get("n"))
+                except (TypeError, ValueError):
+                    continue
+                if 1 <= n <= len(clips) and n not in by_n:
+                    by_n[n] = it           # первый валидный item на слот выигрывает
+                else:
+                    print(f"[clipper] полировка: пропущен item n={it.get('n')} "
+                          f"(дубль/вне диапазона 1..{len(clips)})", flush=True)
             if not by_n and len(items) == len(clips):
-                return items            # n вообще нет, но кол-во совпало → как раньше
+                # n не дали, но кол-во совпало → по позиции (только dict-элементы)
+                return [it if isinstance(it, dict) else {} for it in items]
             return [by_n.get(i + 1) or {} for i in range(len(clips))]
     except Exception as e:
         print("[clipper] полировка метаданных не удалась:", str(e)[:120])
@@ -547,23 +555,26 @@ def _handle_callback(cb: Dict[str, Any], token: str, chat: str) -> None:
 
     if data.startswith("c:ok:") or data.startswith("c:no:"):
         clip_id = data.split(":", 2)[2]
-        clip = st["clips"].get(clip_id)
-        if clip and clip["status"] == "review":
-            with _LOCK:
+        do_copy = None
+        with _LOCK:        # claim статуса review→approved/rejected атомарно (без задвоения)
+            clip = st["clips"].get(clip_id)
+            if clip and clip["status"] == "review":
                 if data.startswith("c:ok:"):
                     clip["status"] = "approved"
-                    try:
-                        dst = _approved_dir(clip["category"]) / Path(clip["path"]).name
-                        shutil.copyfile(clip["path"], dst)
-                    except Exception:
-                        pass
+                    do_copy = (clip.get("path"), clip.get("category"))
                     answer = "✅ В очередь публикаций"
                 else:
                     clip["status"] = "rejected"
                     answer = "❌ Отклонён"
                 _save_state()
-        else:
-            answer = "Уже обработан"
+            else:
+                answer = "Уже обработан"
+        if do_copy and do_copy[0]:        # копируем ВНЕ лока (IO не держит другие потоки)
+            try:
+                dst = _approved_dir(do_copy[1]) / Path(do_copy[0]).name
+                shutil.copyfile(do_copy[0], dst)
+            except Exception:
+                pass
 
     elif data.startswith("p:done:") or data.startswith("p:skip:"):
         pid = data.split(":", 2)[2]
@@ -667,18 +678,23 @@ def _tg_poller_loop() -> None:
                         {"offset": int(st.get("tg_offset") or 0) + 1, "timeout": 25,
                          "allowed_updates": ["message", "callback_query"]}, timeout=35)
             for upd in res.get("result") or []:
-                with _LOCK:
-                    st["tg_offset"] = max(int(st.get("tg_offset") or 0), int(upd["update_id"]))
-                    _save_state()
                 cb = upd.get("callback_query")
                 msg = upd.get("message")
                 from_id = str(((cb or msg or {}).get("from") or {}).get("id") or "")
-                if from_id != str(chat):
-                    continue  # only the owner
-                if cb:
-                    _handle_callback(cb, token, chat)
-                elif msg:
-                    _handle_message(msg, token, chat)
+                try:
+                    if from_id == str(chat):   # only the owner
+                        if cb:
+                            _handle_callback(cb, token, chat)
+                        elif msg:
+                            _handle_message(msg, token, chat)
+                except Exception as he:
+                    print("[clipper] TG handler error:", repr(he))
+                # offset подтверждаем ПОСЛЕ обработки (а не до): краш/перезапуск
+                # между обработкой и подтверждением больше не теряет нажатие ✅/❌ —
+                # Telegram переотдаст апдейт, обработчики идемпотентны по статусам.
+                with _LOCK:
+                    st["tg_offset"] = max(int(st.get("tg_offset") or 0), int(upd["update_id"]))
+                    _save_state()
         except Exception as e:
             s = str(e)
             if "409" in s:
@@ -694,10 +710,13 @@ def _tg_poller_loop() -> None:
 # ----------------------------------------------------------------------------
 def _check_hot_clips() -> None:
     st = _load_state()
-    acc_by_id = {a["id"]: a for a in st["accounts"]}
+    with _LOCK:                    # снимки: коллекции мутируют воркер/автопост на лету
+        plan_snapshot = list(st["plan"])
+        clips_snapshot = list(st["clips"].values())
+        acc_by_id = {a["id"]: a for a in st["accounts"]}
     clip_acc = {}
     clip_posted_at = {}
-    for p in st["plan"]:
+    for p in plan_snapshot:
         if p.get("status") == "posted":
             clip_acc[p["clip_id"]] = acc_by_id.get(p["account_id"], {})
             clip_posted_at[p["clip_id"]] = p.get("posted_at") or p.get("marked_at")
@@ -709,9 +728,9 @@ def _check_hot_clips() -> None:
     b_form = bs.get("buster_payout_form_url") or ""
     b_contact = bs.get("buster_payout_contact") or ""
     now = datetime.now()
-    for clip in st["clips"].values():
+    for clip in clips_snapshot:
         v = clip.get("views")
-        if not isinstance(v, int):
+        if not isinstance(v, int) or isinstance(v, bool):
             continue
         views_str = f"{v:,}".replace(",", " ")
         if v >= HOT_VIEWS and not clip.get("hot_notified"):
@@ -759,10 +778,14 @@ def _check_hot_clips() -> None:
 def _check_health() -> None:
     st = _load_state()
     today = date.today().isoformat()
-    for acc in st["accounts"]:
-        posted = [p for p in st["plan"]
+    with _LOCK:                    # снимки: план/клипы мутируют другие потоки
+        accounts_snapshot = list(st["accounts"])
+        plan_snapshot = list(st["plan"])
+        clips_snapshot = dict(st["clips"])
+    for acc in accounts_snapshot:
+        posted = [p for p in plan_snapshot
                   if p["account_id"] == acc["id"] and p["status"] == "posted"]
-        views = [st["clips"].get(p["clip_id"], {}).get("views") for p in posted]
+        views = [clips_snapshot.get(p["clip_id"], {}).get("views") for p in posted]
         if account_health(views) == "warn":
             last = st["health_warned"].get(acc["id"], "")
             if last[:10] != today:  # max one warning per day per account
@@ -778,6 +801,22 @@ def _yt_ready(acc: Dict[str, Any]) -> bool:
     return (acc.get("platform") == "youtube"
             and bool(y.get("client_id")) and bool(y.get("client_secret"))
             and bool(y.get("refresh_token")))
+
+
+def _claim_plan(plan_id: str, expect: str, new: str) -> bool:
+    """Атомарно сменить статус плана expect→new под _LOCK (compare-and-set).
+    Возвращает True только если статус был РОВНО expect — тогда вызывающий
+    «владеет» переходом. Главная защита от двойного автопоста: планировщик и
+    кнопка «опубликовать сейчас» (или два прохода планировщика) не смогут оба
+    схватить один клип и залить его на канал дважды."""
+    with _LOCK:
+        st = _load_state()
+        p = next((x for x in st["plan"] if x["id"] == plan_id), None)
+        if not p or p.get("status") != expect:
+            return False
+        p["status"] = new
+        _save_state()
+        return True
 
 
 def _manual_post_notify(p: Dict[str, Any], clip: Dict[str, Any], acc: Dict[str, Any],
@@ -804,9 +843,22 @@ def _auto_publish(plan_id: str) -> None:
     p = next((x for x in st["plan"] if x["id"] == plan_id), None)
     if not p or p["status"] != "publishing":
         return
+    if p.get("video_id"):   # уже залит ранее → закрываем, не плодим дубль на канале
+        _claim_plan(plan_id, "publishing", "posted")
+        return
     clip = st["clips"].get(p["clip_id"]) or {}
     acc = next((a for a in st["accounts"] if a["id"] == p["account_id"]), {})
     token, chat = _tg_creds()
+    # Аккаунт удалён/не подключён к YouTube между планированием и постингом — это
+    # НЕ сетевой сбой, ретраить часами бессмысленно (раньше тут падал KeyError).
+    if not _yt_ready(acc):
+        with _LOCK:
+            p["status"] = "notified"
+            p.pop("attempts", None)
+            p.pop("next_try", None)
+            _save_state()
+        _manual_post_notify(p, clip, acc, token, chat, prefix="⚠️ (нет подключения канала) ")
+        return
     try:
         if not (clip.get("path") and Path(clip["path"]).exists()):
             raise RuntimeError("файл клипа не найден")
@@ -822,6 +874,18 @@ def _auto_publish(plan_id: str) -> None:
                 vid = yt.upload_video(access, clip["path"], meta["title"], meta["description"],
                                       tags=[t.lstrip("#") for t in meta["hashtags"]])
                 break
+            except yt.YouTubeAuthError:
+                # Токен отозван/протух — ретрай не поможет, нужен реконнект канала.
+                with _LOCK:
+                    p["status"] = "notified"
+                    p.pop("attempts", None)
+                    p.pop("next_try", None)
+                    _save_state()
+                _notify(f"🔑 Канал «{acc.get('name', '?')}» нужно переподключить — "
+                        f"токен отозван/протух. Открой дашборд и нажми «Подключить YouTube». "
+                        f"Этот ролик пока кидаю ручным сообщением.")
+                _manual_post_notify(p, clip, acc, token, chat, prefix="🔑 (переподключи канал) ")
+                return
             except Exception as e:
                 last_err = e
                 if attempt < 3:
@@ -877,11 +941,14 @@ def _pull_yt_stats_once() -> int:
     """Один проход авто-статистики. Возвращает число обновлённых клипов."""
     st = _load_state()
     updated = 0
-    for acc in st["accounts"]:
+    with _LOCK:                    # снимки: план/аккаунты мутируют другие потоки
+        accounts_snapshot = list(st["accounts"])
+        plan_snapshot = list(st["plan"])
+    for acc in accounts_snapshot:
         if not _yt_ready(acc):
             continue
         vids = {}
-        for p in st["plan"]:
+        for p in plan_snapshot:
             if p["account_id"] == acc["id"] and p.get("video_id"):
                 clip = st["clips"].get(p["clip_id"])
                 if clip is not None:
@@ -928,7 +995,9 @@ def _scheduler_loop() -> None:
             today = date.today().isoformat()
             now_hm = _now_hm()
             now_iso = datetime.now().isoformat(timespec="seconds")
-            for p in st["plan"]:
+            with _LOCK:
+                plan_snapshot = list(st["plan"])   # снимок: план мутируют другие потоки
+            for p in plan_snapshot:
                 if p["status"] != "scheduled":
                     continue
                 # Отложенный повтор после сетевого сбоя — ждём своего времени.
@@ -938,17 +1007,15 @@ def _scheduler_loop() -> None:
                     clip = st["clips"].get(p["clip_id"]) or {}
                     acc = next((a for a in st["accounts"] if a["id"] == p["account_id"]), {})
                     if _yt_ready(acc):
-                        # АВТОПОСТ: официальный YouTube API, в отдельном потоке.
-                        with _LOCK:
-                            p["status"] = "publishing"
-                            _save_state()
-                        threading.Thread(target=_auto_publish, args=(p["id"],),
-                                         daemon=True, name=f"yt-pub-{p['id']}").start()
+                        # АВТОПОСТ: атомарно «забираем» клип (scheduled→publishing).
+                        # Только если забрали именно мы — стартуем заливку, иначе
+                        # его уже взял другой поток/кнопка (без публичного дубля).
+                        if _claim_plan(p["id"], "scheduled", "publishing"):
+                            threading.Thread(target=_auto_publish, args=(p["id"],),
+                                             daemon=True, name=f"yt-pub-{p['id']}").start()
                     else:
-                        with _LOCK:
-                            p["status"] = "notified"
-                            _save_state()
-                        _manual_post_notify(p, clip, acc, token, chat)
+                        if _claim_plan(p["id"], "scheduled", "notified"):
+                            _manual_post_notify(p, clip, acc, token, chat)
             _check_hot_clips()
             _check_health()
         except Exception as e:
@@ -1210,11 +1277,13 @@ def plan_build():
                 continue
             backlog = {a: sum(1 for p in st["plan"] if p["account_id"] == a
                               and p["status"] in ("scheduled", "notified")) for a in accs}
-            busy: Dict[str, Dict[str, int]] = {}
+            # busy = реально ЗАНЯТЫЕ слоты на (аккаунт, дата) — любая существующая
+            # запись плана бронирует свой слот, чтобы build_schedule не положил в
+            # него второй ролик (раньше был счётчик → коллизии слотов).
+            busy: Dict[str, Dict[str, set]] = {}
             for p in st["plan"]:
-                if p["status"] in ("scheduled", "notified"):
-                    busy.setdefault(p["account_id"], {})
-                    busy[p["account_id"]][p["date"]] = busy[p["account_id"]].get(p["date"], 0) + 1
+                if p.get("slot"):
+                    busy.setdefault(p["account_id"], {}).setdefault(p["date"], set()).add(p["slot"])
             assignments = distribute(clips, accs, backlog)
             entries = build_schedule(assignments, date.today(), busy, now_hm=_now_hm())
             for e in entries:
@@ -1349,14 +1418,14 @@ def queue_retry(body: RetryIn):
 def queue_cancel(body: RetryIn):
     """Отменить задачу: pending/failed/done — убрать из очереди; processing —
     пометить на отмену (воркер остановит скачивание/нарезку и приберёт исходник)."""
-    st = _load_state()
-    q = next((x for x in st["queue"] if x["id"] == body.id), None)
-    if not q:
-        return {"ok": True}
-    if q["status"] == "processing":
-        _CANCEL.add(body.id)
-        return {"ok": True, "state": "останавливаю"}
-    with _LOCK:
+    with _LOCK:        # проверка статуса и ветка — под одним локом, согласованно с воркером
+        st = _load_state()
+        q = next((x for x in st["queue"] if x["id"] == body.id), None)
+        if not q:
+            return {"ok": True}
+        if q["status"] == "processing":
+            _CANCEL.add(body.id)
+            return {"ok": True, "state": "останавливаю"}
         st["queue"] = [x for x in st["queue"] if x["id"] != body.id]
         _save_state()
     return {"ok": True, "state": "убрано"}
@@ -1388,9 +1457,11 @@ def post_publish(body: PublishIn):
     if not acc or not _yt_ready(acc):
         return JSONResponse({"error": "аккаунт не подключен к YouTube — опубликуй вручную "
                                       "и нажми «🟢 опубликовал»"}, status_code=400)
-    with _LOCK:
-        entry["status"] = "publishing"
-        _save_state()
+    # Атомарно забираем пост (scheduled/notified → publishing). Если не вышло —
+    # его уже схватил планировщик или другое нажатие, второй заливки не будет.
+    if not (_claim_plan(entry["id"], "scheduled", "publishing")
+            or _claim_plan(entry["id"], "notified", "publishing")):
+        return JSONResponse({"error": "пост уже публикуется или обработан"}, status_code=400)
     threading.Thread(target=_auto_publish, args=(entry["id"],),
                      daemon=True, name=f"yt-pubnow-{entry['id']}").start()
     return {"ok": True}

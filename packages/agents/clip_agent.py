@@ -185,9 +185,13 @@ class ClipAgent(BaseAgent):
             size += len(ln) + 1
         if buf:
             chunks.append("\n".join(buf))
-        if len(chunks) > MAX_CHUNKS:  # extremely long film → thin out evenly
-            step = len(chunks) / float(MAX_CHUNKS)
-            chunks = [chunks[int(i * step)] for i in range(MAX_CHUNKS)]
+        if len(chunks) > MAX_CHUNKS:
+            # Очень длинное видео: НЕ выбрасываем куски (так терялись виральные
+            # моменты из пропущенных кусков — а доктрина модуля обещает полное
+            # покрытие), а СЛИВАЕМ соседние в ≤MAX_CHUNKS более крупных. Весь
+            # транскрипт остаётся просканированным, просто кусками побольше.
+            group = (len(chunks) + MAX_CHUNKS - 1) // MAX_CHUNKS    # ceil без import
+            chunks = ["\n".join(chunks[i:i + group]) for i in range(0, len(chunks), group)]
 
         system = (
             "Ты — лучший редактор вирусных коротких видео (TikTok/Reels/Shorts). "

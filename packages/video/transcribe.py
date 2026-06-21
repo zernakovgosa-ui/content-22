@@ -242,7 +242,8 @@ def _transcribe_openai_compatible(
     body, ctype = _build_multipart(fields, audio_path.name, file_bytes)
     last_err: Optional[str] = None
     ki = start_ki
-    max_tries = max(3, len(keys) + 2)
+    tried_keys = 0          # сколько РАЗНЫХ ключей перебрали в текущем круге
+    max_tries = max(3, len(keys) * 2 + 2)
     for attempt in range(1, max_tries + 1):
         key = keys[ki % len(keys)]
         req = urllib.request.Request(
@@ -268,12 +269,15 @@ def _transcribe_openai_compatible(
                 tag = "лимит" if e.code == 429 else "битый ключ"
                 last_err = f"HTTP {e.code} (ключ {ki % len(keys) + 1}/{len(keys)}, {tag})"
                 ki += 1
-                if ki % len(keys) != 0:                # есть ещё неиспробованные ключи — без паузы
+                tried_keys += 1
+                if tried_keys < len(keys):             # ещё есть неиспробованные ключи — без паузы
                     print(f"[stt] {tag} (HTTP {e.code}) — пробую следующий Groq-ключ", flush=True)
                     continue
-                if e.code == 429:                      # все ключи в лимите — пауза перед кругом
+                # обошли ВСЕ ключи (корректно при любом start_ki)
+                if e.code == 429:                      # все в лимите — пауза, новый круг
                     print("[stt] все ключи в лимите — пауза перед новым кругом", flush=True)
                     time.sleep(8)
+                    tried_keys = 0
                     continue
                 raise RuntimeError(f"все Groq-ключи битые (HTTP {e.code}): {detail or e.reason}")
             if e.code in (500, 502, 503, 504) and attempt < max_tries:
@@ -381,6 +385,8 @@ def _transcribe_cloud(
         "text": " ".join(all_text).strip(),
         "segments": all_segments,
         "words": all_words,
+        "chunks_total": n,
+        "chunks_ok": got,        # got<n → транскрипт ЧАСТИЧНЫЙ (не кэшировать как финал)
     }
 
 
@@ -509,7 +515,18 @@ def transcribe(source_path: str | Path, settings: Optional[Dict[str, Any]] = Non
                     out["error"] = None
                     out["duration"] = _transcript_duration(out)
                     out["cached"] = False
-                    _cache_store(cache_key, out)
+                    # Кэшируем ТОЛЬКО полный транскрипт. Частичный (chunks_ok<total —
+                    # часть кусков не распозналась из-за лимита) отдаём пайплайну, но
+                    # НЕ сохраняем — чтобы следующий прогон добрал недостающее, а не
+                    # навсегда возвращал обрезанные субтитры из кэша.
+                    ct = int(out.get("chunks_total") or 1)
+                    ck = int(out.get("chunks_ok") or 1)
+                    out["partial"] = ck < ct
+                    if not out["partial"]:
+                        _cache_store(cache_key, out)
+                    else:
+                        print(f"[stt] транскрипт частичный ({ck}/{ct} кусков) — "
+                              f"не кэширую, следующий прогон добёрет", flush=True)
                     return out
                 errors.append(f"{provider}: empty result")
             except Exception as e:

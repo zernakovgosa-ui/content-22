@@ -92,8 +92,13 @@ def _read_json(path: Path, default: Any) -> Any:
 
 
 def _write_json(path: Path, value: Any) -> None:
+    # Атомарно: пишем во временный файл и переименовываем. Иначе краш/перезапуск
+    # 24/7-сервера ПОСРЕДИ записи оставит обрезанный JSON — и offset/очередь
+    # публикаций молча обнулятся при следующем чтении.
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
+    os.replace(tmp, path)   # атомарная замена и на POSIX, и на Windows
 
 
 def _tg_creds(settings: Dict[str, Any]) -> Tuple[str, str]:

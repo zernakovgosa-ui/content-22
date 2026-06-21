@@ -297,6 +297,10 @@ function render(){
     </div></div>`).join('') || '<div class="card muted">Аккаунтов нет</div>';
 
   const posted = (S.plan||[]).filter(p=>p.status==='posted');
+  // Сохраняем то, что пользователь СЕЙЧАС печатает в полях статистики — иначе
+  // авто-render каждые 3с стирает ввод, и 6-значное число не успеть набрать.
+  const af = document.activeElement;
+  const keep = (af && /^[vl]-/.test(af.id||'')) ? {id:af.id, val:af.value, ss:af.selectionStart} : null;
   $('stat-rows').innerHTML = posted.map(p=>{
     const c=(S.clips||[]).find(c=>c.id===p.clip_id)||{};
     return `<tr><td>${esc(c.title||p.clip_id)}</td><td>${esc(accName(p.account_id))}</td>
@@ -304,6 +308,10 @@ function render(){
       <td><input style="width:90px" type="number" id="l-${p.clip_id}" value="${c.likes??''}" placeholder="—"/></td>
       <td><button class="ghost" style="padding:4px 12px" onclick="saveStats('${p.clip_id}')">💾</button></td></tr>`;
   }).join('') || '<tr><td colspan="5" class="muted">Опубликованных пока нет</td></tr>';
+  if (keep) {                       // вернуть значение, фокус и каретку в редактируемое поле
+    const el = document.getElementById(keep.id);
+    if (el) { el.value = keep.val; try { el.focus(); el.setSelectionRange(keep.ss, keep.ss); } catch(e){} }
+  }
 
   // бустер
   if (S.buster) {
@@ -406,8 +414,10 @@ async function downloadYt(){
   refresh();
 }
 async function saveStats(cid){
-  const v=parseInt($('v-'+cid).value||'0',10), l=parseInt($('l-'+cid).value||'',10);
-  await api('/stats/set',{clip_id:cid,views:v,likes:isNaN(l)?null:l}); refresh();
+  const vv=parseInt($('v-'+cid).value,10);
+  if(isNaN(vv)) return;            // пустое поле — не затираем сохранённые просмотры нулём
+  const l=parseInt($('l-'+cid).value,10);
+  await api('/stats/set',{clip_id:cid,views:vv,likes:isNaN(l)?null:l}); refresh();
 }
 async function busterSubmit(cid){ await api('/buster/submit',{clip_id:cid,submitted:true}); refresh(); }
 

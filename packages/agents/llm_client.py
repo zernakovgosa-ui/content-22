@@ -12,6 +12,7 @@ breaks.
 from __future__ import annotations
 
 import json
+import re
 import time
 import urllib.request
 import urllib.error
@@ -36,6 +37,16 @@ class LLMError(Exception):
 
 
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"  # plain urllib UA gets 403'd by Cloudflare (Groq etc.)
+
+
+def _extract_text(res: dict) -> str:
+    """Текст из OpenAI-совместимого ответа (choices[0].message.content). Пусто, если
+    ответ без choices/контента — единая точка, чтобы и complete(), и пул Groq
+    одинаково отличали валидный ответ от пустого 200."""
+    choices = res.get("choices") if isinstance(res, dict) else None
+    if not choices:
+        return ""
+    return ((choices[0].get("message", {}) or {}).get("content") or "").strip()
 
 
 def _post(url: str, headers: dict, payload: dict, timeout: int = 60) -> dict:
@@ -94,7 +105,14 @@ def _post_groq(payload: dict, fallback_key: str = "", timeout: int = 60) -> dict
         req = urllib.request.Request(GROQ_URL, data=data, method="POST", headers=headers)
         try:
             with urllib.request.urlopen(req, timeout=timeout) as r:
-                return json.loads(r.read().decode("utf-8"))
+                res = json.loads(r.read().decode("utf-8"))
+            if not _extract_text(res) and t < tries - 1:   # 200 с пустым content (бывает на free Groq)
+                last_err = f"empty 200 (ключ …{key[-4:]})"
+                if groq_pool and pool_keys and groq_pool.count() > 1:
+                    groq_pool.rotate()
+                print("[groq] пустой ответ (200) — следующий ключ", flush=True)
+                continue
+            return res
         except urllib.error.HTTPError as e:
             detail = ""
             try:
@@ -177,11 +195,10 @@ def complete(
         else:
             headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
             res = _post(OPENAI_URL, headers, payload)
-        choices = res.get("choices", [])
-        text = ((choices[0].get("message", {}).get("content") if choices else "") or "").strip()
+        text = _extract_text(res)
         if not text:
-            # Groq на бесплатном тарифе порой отдаёт 200 с пустым content — это НЕ
-            # валидный ответ. Бросаем, чтобы сработал ретрай/фолбэк, а не пустой текст.
+            # Пустой content (бывает на free Groq) — НЕ валидный ответ. Бросаем,
+            # чтобы сработал ретрай/фолбэк, а не пустой текст.
             raise LLMError(f"empty {provider} response: {str(res)[:300]}")
         return text
 
@@ -198,17 +215,24 @@ def complete_json(
     """Like complete(), but parse the result as JSON (strips code fences)."""
     raw = complete(provider, api_key, system, user, **kw)
     cleaned = raw.strip()
-    if cleaned.startswith("```"):
-        # drop ```json ... ``` fences
-        cleaned = cleaned.split("```", 2)
-        cleaned = cleaned[1] if len(cleaned) > 1 else raw
-        if cleaned.lstrip().lower().startswith("json"):
-            cleaned = cleaned.lstrip()[4:]
+    # Снять ```...```-фенс ГДЕ УГОДНО (модели часто пишут пояснение ДО блока, с
+    # тегом языка или без) — берём содержимое первого код-блока.
+    m = re.search(r"```(?:json)?\s*(.*?)```", cleaned, re.S | re.I)
+    if m:
+        cleaned = m.group(1).strip()
     cleaned = cleaned.strip().strip("`").strip()
     try:
         return json.loads(cleaned)
-    except Exception as e:
-        raise LLMError(f"bad JSON from model: {e}; raw={raw[:300]}")
+    except Exception:
+        # Последний шанс: вырезать от первой { или [ до парной закрывающей.
+        for op, cl in (("{", "}"), ("[", "]")):
+            i, j = cleaned.find(op), cleaned.rfind(cl)
+            if 0 <= i < j:
+                try:
+                    return json.loads(cleaned[i:j + 1])
+                except Exception:
+                    pass
+        raise LLMError(f"bad JSON from model: raw={raw[:300]}")
 
 
 __all__ = ["complete", "complete_json", "LLMError"]

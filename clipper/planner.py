@@ -136,12 +136,14 @@ def distribute(clip_ids: Sequence[str], account_ids: Sequence[str],
 
 
 def build_schedule(assignments: Dict[str, List[str]], start: date,
-                   busy: Optional[Dict[str, Dict[str, int]]] = None,
+                   busy: Optional[Dict[str, Dict[str, set]]] = None,
                    now_hm: Optional[str] = None) -> List[Dict[str, Any]]:
     """Turn {account: [clips]} into plan entries.
 
-    busy = {account_id: {iso_date: n_posts_already_planned}} so new clips fill
-    remaining slots instead of double-booking a day.
+    busy = {account_id: {iso_date: {занятые слоты 'HH:MM'}}} — новые клипы кладём
+    в реально СВОБОДНЫЕ слоты, а не «первые taken заняты». (Раньше busy был
+    счётчиком: после пропуска утреннего слота по now_hm один и тот же слот мог
+    забронироваться дважды → два ролика в одно время на один аккаунт.)
     now_hm = current 'HH:MM': slots на стартовый день, которые УЖЕ прошли,
     пропускаются — иначе план срабатывает мгновенно пачкой (реальный кейс).
 
@@ -151,24 +153,29 @@ def build_schedule(assignments: Dict[str, List[str]], start: date,
     """
     plan: List[Dict[str, Any]] = []
     busy = busy or {}
+    day_slots = list(POST_SLOTS[:POSTS_PER_DAY])   # не больше POSTS_PER_DAY/день, без повтора слота
     for acc, clips in assignments.items():
         day = start
-        acc_busy = dict(busy.get(acc, {}))
+        acc_busy = {d: set(s) for d, s in (busy.get(acc) or {}).items()}
         i = 0
-        while i < len(clips):
-            taken = int(acc_busy.get(day.isoformat(), 0))
-            for slot_idx in range(taken, POSTS_PER_DAY):
+        guard = 0
+        while i < len(clips) and guard < 3650:     # backstop ~10 лет, не вечный цикл
+            guard += 1
+            occupied = acc_busy.setdefault(day.isoformat(), set())
+            for slot in day_slots:
                 if i >= len(clips):
                     break
-                slot = POST_SLOTS[min(slot_idx, len(POST_SLOTS) - 1)]
+                if slot in occupied:
+                    continue                       # слот уже занят на этот день
                 if now_hm and day == start and slot <= now_hm:
-                    continue   # этот слот сегодня уже прошёл
+                    continue                       # этот слот сегодня уже прошёл
                 plan.append({
                     "clip_id": clips[i],
                     "account_id": acc,
                     "date": day.isoformat(),
                     "slot": slot,
                 })
+                occupied.add(slot)
                 i += 1
             day = day + timedelta(days=1)
     plan.sort(key=lambda p: (p["date"], p["slot"], p["account_id"]))
@@ -182,7 +189,7 @@ def account_health(recent_views: Sequence[Optional[int]]) -> str:
     HEALTH_MIN_POSTS of them are ALL under HEALTH_LOW_VIEWS — the classic
     "просмотры умерли" shadowban smell. Unmeasured posts (None) are skipped.
     """
-    measured = [v for v in recent_views if isinstance(v, int)]
+    measured = [v for v in recent_views if isinstance(v, int) and not isinstance(v, bool)]
     if len(measured) < HEALTH_MIN_POSTS:
         return "ok"
     tail = measured[-HEALTH_MIN_POSTS:]

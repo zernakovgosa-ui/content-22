@@ -163,41 +163,67 @@ def _merge_av(video: Path, audio: Path, out: Path) -> bool:
 
 
 # ── скачивание потока байт ───────────────────────────────────────────────────
+def _looks_like_media(dest: Path) -> bool:
+    """Грубая проверка, что скачали видео, а не HTML/JSON-страницу ошибки прокси
+    (часто отдаётся с Content-Type октет-стрим/без типа и проходит гейт по размеру)."""
+    try:
+        with open(dest, "rb") as f:
+            head = f.read(64)
+    except Exception:
+        return False
+    return head.lstrip()[:1] not in (b"<", b"{")
+
+
 def _stream(url: str, dest: Path, ua: str, progress_cb=None,
             timeout: int = DOWNLOAD_TIMEOUT, refresh=None, max_attempts: int = 6) -> bool:
-    """Скачать URL в файл с ВОЗОБНОВЛЕНИЕМ (HTTP Range).
+    """Скачать URL в файл.
 
-    Большой 1080p-файл на флаки РФ-сети рвётся на середине. Вместо рестарта с нуля
-    догружаем ХВОСТ (`Range: bytes=done-`) — так 1080p докачивается за несколько
-    попыток, а не падает. refresh() → свежий URL (cobalt-туннель живёт минуты);
-    если не задан — резюмим тот же url. Неполный файл в итоге отбраковываем.
+    Резюм по Range (догрузка ХВОСТА) безопасен ТОЛЬКО для стабильного URL,
+    отдающего тот же байт-поток (прямой googlevideo у invidious/piped, refresh=None).
+    cobalt-туннель (refresh задан) генерится ЗАНОВО на каждый POST со своими
+    смещениями — дозапись хвоста туда склеила бы куски РАЗНЫХ потоков и молча
+    била mp4. Поэтому для туннеля при обрыве качаем С НУЛЯ свежим URL, а не
+    дописываем. Неполный/битый файл в итоге отбраковываем и удаляем.
     """
+    def _fail() -> bool:
+        if dest.exists():
+            try:
+                dest.unlink()
+            except Exception:
+                pass
+        return False
+
     if dest.exists():
         try:
-            dest.unlink()   # стартуем чисто; резюм только ВНУТРИ этого вызова
+            dest.unlink()   # стартуем чисто
         except Exception:
             pass
+    resumable = refresh is None
     done = 0
     total = 0
     for attempt in range(1, max_attempts + 1):
         cur_url = (refresh() if (refresh and attempt > 1) else url) or url
         if not cur_url:
             break
-        headers = {"Range": f"bytes={done}-"} if done > 0 else {}
+        if not resumable:
+            done = 0                                   # туннель: каждая попытка с нуля
+        use_range = resumable and done > 0
+        headers = {"Range": f"bytes={done}-"} if use_range else {}
         try:
             with urllib.request.urlopen(_request(cur_url, ua, headers=headers), timeout=timeout) as r:
-                if "text/html" in (r.headers.get("Content-Type") or "").lower():
-                    return False                      # прокси отдал страницу ошибки
+                ctype = (r.headers.get("Content-Type") or "").lower()
+                if "text/html" in ctype or "application/json" in ctype:
+                    return _fail()                     # прокси отдал страницу/JSON ошибки
                 status = getattr(r, "status", 200) or 200
-                if status == 206:                     # сервер поддержал докачку
+                if status == 206 and use_range:        # докачка поддержана (стабильный URL)
                     m = re.search(r"/(\d+)\s*$", r.headers.get("Content-Range") or "")
                     if m:
                         total = int(m.group(1))
                     mode = "ab"
-                else:                                 # Range проигнорирован → с нуля
+                else:                                  # с нуля (туннель или Range проигнорён)
                     done = 0
-                    total = int(r.headers.get("Content-Length")
-                                or r.headers.get("Estimated-Content-Length") or 0) or total
+                    total = int(r.headers.get("Content-Length")           # без стейл-значения
+                                or r.headers.get("Estimated-Content-Length") or 0)
                     mode = "wb"
                 with open(dest, mode) as f:
                     while True:
@@ -213,24 +239,24 @@ def _stream(url: str, dest: Path, ua: str, progress_cb=None,
                                 pass
         except Exception as e:
             done = dest.stat().st_size if dest.exists() else 0
-            print(f"[downloader] обрыв ({str(e)[:50]}) — догрузка с {done} б "
+            print(f"[downloader] обрыв ({str(e)[:50]}) — "
+                  f"{'догрузка с ' + str(done) + ' б' if resumable else 'перекачаю с нуля'} "
                   f"(попытка {attempt}/{max_attempts})", flush=True)
             continue
         # Поток закончился — полный ли файл?
-        if total and done >= int(total * 0.99):
-            return dest.exists() and dest.stat().st_size >= MIN_OK_BYTES
-        if not total and done >= MIN_OK_BYTES:
-            return True                               # размер неизвестен, поток закрылся чисто
-        print(f"[downloader] неполно {done}/{total or '?'} б — догружаю "
+        complete = (total and done >= int(total * 0.99)) or (not total and done >= MIN_OK_BYTES)
+        if complete:
+            if (dest.exists() and dest.stat().st_size >= MIN_OK_BYTES
+                    and _looks_like_media(dest)):
+                return True
+            return _fail()
+        print(f"[downloader] неполно {done}/{total or '?'} б — "
+              f"{'догружаю' if resumable else 'перекачаю'} "
               f"(попытка {attempt}/{max_attempts})", flush=True)
-    ok = (dest.exists() and dest.stat().st_size >= MIN_OK_BYTES
-          and (not total or done >= total * 0.95))
-    if not ok and dest.exists():
-        try:
-            dest.unlink()
-        except Exception:
-            pass
-    return ok
+    if (dest.exists() and dest.stat().st_size >= MIN_OK_BYTES
+            and (not total or done >= total * 0.95) and _looks_like_media(dest)):
+        return True
+    return _fail()
 
 
 # ── Метод 1: cobalt (POST /, alwaysProxy → tunnel) ──────────────────────────
@@ -533,7 +559,11 @@ def download_youtube(url: str, dest_dir: str | Path, progress_cb=None,
         except Exception as e:
             msg = str(e)
             low = msg.lower()
-            if "Sign in" in msg or "age" in low:
+            # Узкие фразы YouTube, а не голая подстрока "age" (ловила page/usage/
+            # message/storage и ложно обрывала всю цепочку методов).
+            if ("sign in to confirm" in low or "age-restricted" in low
+                    or "age restricted" in low or "confirm your age" in low
+                    or "inappropriate for some" in low):
                 raise RuntimeError("YouTube требует вход (возрастное ограничение) — "
                                    "этот ролик скачать нельзя")
             last_ytdlp_err = msg[:160]
