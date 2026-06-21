@@ -269,12 +269,27 @@ def _llm_polish_clips(clips: List[Dict[str, Any]], source_name: str, cat_label: 
         desc_block = f"\nОписание исходного ролика (используй как контекст):\n{src_desc[:700]}\n" \
             if src_desc else ""
         user = (f"Источник: {source_name} (категория: {cat_label}).{desc_block} Клипы:\n{lines}\n\n"
-                'JSON: {"items": [{"title": "...", "description": "...", '
-                '"hashtags": ["#shorts", "..."]}]} — ровно по одному элементу на клип, по порядку.')
-        data = llm_client.complete_json(prov, key, system, user, max_tokens=2000, temperature=0.7)
+                'Ответь JSON: {"items": [{"n": 1, "title": "...", "description": "...", '
+                '"hashtags": ["#shorts", "..."]}]}. Поле "n" — НОМЕР клипа из списка выше '
+                '(1, 2, 3...), по элементу на КАЖДЫЙ клип, n обязан совпадать с номером клипа.')
+        mdl = settings.get("gemini_model") if prov == "gemini" else None
+        data = llm_client.complete_json(prov, key, system, user, max_tokens=2000,
+                                        temperature=0.7, model=mdl)
         items = data.get("items") if isinstance(data, dict) else None
-        if isinstance(items, list) and len(items) == len(clips):
-            return items
+        if isinstance(items, list) and items:
+            # ВАЖНО: привязка по номеру n, а НЕ по позиции — LLM иногда возвращает
+            # клипы в другом порядке, и заголовок попадал на ЧУЖОЙ ролик. Если n не
+            # дали — оставляем пусто, _polish_meta строит заголовок из хука клипа.
+            by_n: Dict[int, Dict[str, Any]] = {}
+            for it in items:
+                if isinstance(it, dict):
+                    try:
+                        by_n[int(it.get("n"))] = it
+                    except (TypeError, ValueError):
+                        pass
+            if not by_n and len(items) == len(clips):
+                return items            # n вообще нет, но кол-во совпало → как раньше
+            return [by_n.get(i + 1) or {} for i in range(len(clips))]
     except Exception as e:
         print("[clipper] полировка метаданных не удалась:", str(e)[:120])
     return None
