@@ -219,6 +219,10 @@ function clipTitle(id){ const c=(S?.clips||[]).find(c=>c.id===id); return c?(c.t
 
 function render(){
   if(!S) return;
+  // запоминаем, что юзер сейчас печатает (USDT/логин/просмотры/лайки) — авто-render
+  // каждые 3с не должен стирать ввод; восстановим в самом конце render().
+  const _af=document.activeElement, _fid=_af&&_af.id;
+  const _keepF=(_fid&&/^(w-|lg-|v-|l-)/.test(_fid))?{id:_fid,val:_af.value,ss:_af.selectionStart}:null;
   $('tg').textContent = S.tg_connected ? 'TG-бот: подключен' : 'TG-бот: нет ключа';
   $('tg').className = 'tg pill ' + (S.tg_connected ? 'ok' : 'err');
   { const cpm=$('cpm'); if(cpm && document.activeElement!==cpm) cpm.value = S.clips_per_10min || 3; }
@@ -268,10 +272,18 @@ function render(){
     const warm = a.warmed
       ? `<button class="ghost" style="padding:2px 10px" title="Кликни, если канал ещё не прогрет" onclick="warmAcc('${a.id}',false)">🔥 прогрет</button>`
       : `<button class="ghost" style="padding:2px 10px" title="Кликни, когда выполнишь чек-лист прогрева" onclick="warmAcc('${a.id}',true)">🧊 не прогрет</button>`;
-    return `<tr><td>${esc(a.name)}</td><td>${esc(catName(a.category))}</td><td>${plat}</td>
+    let row = `<tr><td>${esc(a.name)}</td><td>${esc(catName(a.category))}</td><td>${plat}</td>
     <td>${a.posted}</td><td>${a.planned}</td>
     <td><span class="pill ${a.health==='warn'?'warn':'ok'}">${a.health==='warn'?'⚠ тихо':'ок'}</span> ${warm}</td>
     <td><button class="ghost" style="padding:4px 10px" onclick="delAcc('${a.id}')">✕</button></td></tr>`;
+    if (a.category === 'buster') {
+      row += `<tr><td colspan="7" style="padding:6px 12px;background:rgba(212,175,55,.06)">
+        <span class="muted">💸 автопакет выплаты —</span>
+        USDT (TRC-20): <input id="w-${a.id}" style="width:300px" value="${esc(a.payout_wallet||'')}" placeholder="адрес кошелька TRC-20"/>
+        &nbsp;логин: <input id="lg-${a.id}" style="width:150px" value="${esc(a.login||'')}" placeholder="ник канала"/>
+        <button class="ghost" style="padding:3px 12px" onclick="savePayout('${a.id}')">💾</button></td></tr>`;
+    }
+    return row;
   }).join('')
     || '<tr><td colspan="7" class="muted">Добавь аккаунты — без них план не собрать</td></tr>';
 
@@ -355,6 +367,8 @@ function render(){
       $('buster-table').innerHTML = tbl ? `<b>Ставки:</b> ${tbl}<br/>Оплата по высшему достигнутому порогу, НЕ суммируется. Выплаты каждые 14 дней.` : '';
     }
   }
+  if(_keepF){ const e=document.getElementById(_keepF.id);
+    if(e){ e.value=_keepF.val; try{ e.focus(); e.setSelectionRange(_keepF.ss,_keepF.ss); }catch(_){} } }
 }
 
 async function refresh(){
@@ -431,6 +445,11 @@ async function saveStats(cid){
   if(isNaN(vv)) return;            // пустое поле — не затираем сохранённые просмотры нулём
   const l=parseInt($('l-'+cid).value,10);
   await api('/stats/set',{clip_id:cid,views:vv,likes:isNaN(l)?null:l}); refresh();
+}
+async function savePayout(id){
+  const wallet=$('w-'+id).value.trim(), login=$('lg-'+id).value.trim();
+  const r=await api('/accounts/payout',{id,wallet,login});
+  if(r&&r.error) alert(r.error); else alert('Сохранил: USDT-адрес и логин для автопакета выплаты');
 }
 async function busterSubmit(cid){ await api('/buster/submit',{clip_id:cid,submitted:true}); refresh(); }
 

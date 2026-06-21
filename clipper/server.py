@@ -25,6 +25,7 @@ import sys
 import threading
 import time
 import urllib.parse
+import urllib.request
 import uuid
 from datetime import date, datetime
 from pathlib import Path
@@ -55,6 +56,7 @@ from clipper.planner import (                                 # noqa: E402
     payout_for_views, days_left_to_payout, buster_earnings,
 )
 from clipper.publishers import youtube as yt                  # noqa: E402
+from clipper.publishers import gdrive as gd                   # noqa: E402
 from packages.integrations.telegram_bot import _call, _send_video   # noqa: E402
 
 YT_REDIRECT = "http://localhost:8002/auth/yt/callback"
@@ -547,6 +549,100 @@ def _approved_dir(category: str) -> Path:
     return d
 
 
+# ── Автопакет выплаты (buster): заливка записи статистики на Drive + готовый текст ──
+def _tg_download_file(token: str, file_id: str, dest: Path) -> bool:
+    """Скачать присланный в бот файл (видео/документ) по file_id."""
+    try:
+        info = _call(token, "getFile", {"file_id": file_id})
+        fp = (info.get("result") or {}).get("file_path")
+        if not fp:
+            return False
+        url = f"https://api.telegram.org/file/bot{token}/{fp}"
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=240) as r, open(dest, "wb") as f:
+            while True:
+                chunk = r.read(1024 * 256)
+                if not chunk:
+                    break
+                f.write(chunk)
+        return dest.exists() and dest.stat().st_size > 0
+    except Exception as e:
+        print(f"[buster] не скачал файл из TG: {str(e)[:100]}", flush=True)
+        return False
+
+
+def _buster_packet(clip: Dict[str, Any], acc: Dict[str, Any], drive_link: str, vid: str = "") -> str:
+    """Готовый текст для формы выплаты (копипаст по полям)."""
+    s = _settings()
+    video_link = f"https://youtu.be/{vid}" if vid else "—"
+    v = clip.get("views")
+    views = f"{v:,}".replace(",", " ") if isinstance(v, int) else "—"
+    payout = payout_for_views(v if isinstance(v, int) else 0, s.get("buster_payout_table") or [])
+    cur = s.get("buster_payout_currency") or "$"
+    wallet = acc.get("payout_wallet") or "⚠ укажи USDT-адрес в карточке аккаунта (дашборд)"
+    login = acc.get("login") or acc.get("name") or "—"
+    my_tg = s.get("buster_my_tg") or "⚠ впиши свой TG в settings.json (buster_my_tg)"
+    form = s.get("buster_payout_form_url") or ""
+    return (
+        "📦 ПАКЕТ ДЛЯ ФОРМЫ ВЫПЛАТЫ — скопируй по полям:\n\n"
+        f"Ваш TG: {my_tg}\n"
+        f"Ссылка на видео: {video_link}\n"
+        f"Кол-во просмотров: {views}\n"
+        f"ОПЛАТА (TRC-20 USDT): {wallet}\n"
+        f"Ник аккаунта (логин): {login}\n"
+        f"Google Drive (запись статистики): {drive_link}\n\n"
+        f"💵 Сумма по таблице: {cur}{payout}\n"
+        f"📝 Форма: {form}\n"
+        "После отправки формы жми «✅ сдал» под клипом в дашборде."
+    )
+
+
+def _buster_finish(clip_id: str, file_id: str, token: str, chat: str) -> None:
+    """Получили запись статистики → грузим на Drive аккаунта канала → готовый пакет."""
+    st = _load_state()
+    clip = st["clips"].get(clip_id) or {}
+    p = next((x for x in st["plan"] if x.get("clip_id") == clip_id and x.get("video_id")), None)
+    acc = next((a for a in st["accounts"] if a["id"] == (p or {}).get("account_id")), None) if p else None
+    if acc is None:   # фолбэк: любой подключённый buster-аккаунт
+        acc = next((a for a in st["accounts"] if a.get("category") == BUSTER_CAT and _yt_ready(a)), None)
+    if not acc or not _yt_ready(acc):
+        _call(token, "sendMessage", {"chat_id": chat,
+              "text": "⚠ Не нашёл подключённый YouTube-аккаунт для этого клипа — подключи канал в дашборде."})
+        return
+    _call(token, "sendMessage", {"chat_id": chat, "text": "⏳ Заливаю запись на Google Drive…"})
+    tmp = DATA_DIR / f"_buster_{clip_id}.mp4"
+    try:
+        if not _tg_download_file(token, file_id, tmp):
+            _call(token, "sendMessage", {"chat_id": chat, "text": "⚠ Не смог скачать запись из Telegram — пришли ещё раз."})
+            return
+        y = acc["yt"]
+        access = yt.refresh_access_token(y["client_id"], y["client_secret"], y["refresh_token"])
+        name = f"stats_{acc.get('login') or acc.get('name')}_{clip_id}.mp4"
+        fid = gd.upload_file(access, tmp, name)
+        gd.make_public(access, fid)
+        link = gd.file_link(fid)
+        with _LOCK:
+            st["pending_input"] = None
+            clip["buster_drive_link"] = link
+            _save_state()
+        _call(token, "sendMessage", {"chat_id": chat,
+              "text": _buster_packet(clip, acc, link, vid=(p or {}).get("video_id", ""))})
+    except gd.DriveError as e:
+        _call(token, "sendMessage", {"chat_id": chat,
+              "text": f"⚠ Drive отказал: {str(e)[:140]}\nСкорее всего нужно переподключить канал "
+                      f"(добавить Drive-доступ): дашборд → «🔗 Подключить»."})
+    except yt.YouTubeAuthError:
+        _call(token, "sendMessage", {"chat_id": chat,
+              "text": "🔑 Токен канала протух — переподключи в дашборде и пришли запись снова."})
+    except Exception as e:
+        _call(token, "sendMessage", {"chat_id": chat, "text": f"⚠ Сбой заливки: {str(e)[:140]}"})
+    finally:
+        try:
+            tmp.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
 def _handle_callback(cb: Dict[str, Any], token: str, chat: str) -> None:
     data = str(cb.get("data") or "")
     cb_id = cb.get("id")
@@ -622,6 +718,20 @@ def _handle_callback(cb: Dict[str, Any], token: str, chat: str) -> None:
                       f"(можно «12500» или «12500 800» = просмотры лайки)"})
         answer = ""
 
+    elif data.startswith("b:sub:"):
+        clip_id = data.split(":", 2)[2]
+        with _LOCK:
+            st["pending_input"] = {"type": "buster_video", "clip_id": clip_id}
+            _save_state()
+        clip = st["clips"].get(clip_id) or {}
+        _call(token, "sendMessage", {"chat_id": chat,
+              "text": f"📤 Сдача «{(clip.get('title') or clip_id)[:50]}»:\n"
+                      f"1) Открой YouTube Studio → статистику этого ролика\n"
+                      f"2) Запиши экран (видно просмотры + обнови страницу — докажи, что аккаунт твой)\n"
+                      f"3) Пришли эту запись СЮДА — видео или файлом.\n\n"
+                      f"Я залью её на Google Drive нужного аккаунта и соберу готовый пакет для формы."})
+        answer = "📤 Жду запись статистики"
+
     if cb_id:
         try:
             _call(token, "answerCallbackQuery", {"callback_query_id": cb_id, "text": answer[:180]})
@@ -634,6 +744,21 @@ def _handle_message(msg: Dict[str, Any], token: str, chat: str) -> None:
     st = _load_state()
 
     pending = st.get("pending_input")
+    if pending and pending.get("type") == "buster_video":
+        media = msg.get("video") or msg.get("document") or msg.get("animation")
+        file_id = (media or {}).get("file_id")
+        if file_id:
+            _buster_finish(pending.get("clip_id"), file_id, token, chat)
+            return
+        if text.lower() in ("/start", "отмена", "/cancel"):
+            with _LOCK:
+                st["pending_input"] = None
+                _save_state()
+            _call(token, "sendMessage", {"chat_id": chat, "text": "Ок, отменил сдачу."})
+            return
+        _call(token, "sendMessage", {"chat_id": chat,
+              "text": "Пришли именно ВИДЕО-запись статистики (видео или файлом). Отмена — «отмена»."})
+        return
     if pending and pending.get("type") == "views":
         parts = text.replace(",", " ").split()
         if parts and parts[0].isdigit():
@@ -762,10 +887,18 @@ def _check_hot_clips() -> None:
                         clip["buster_payout_notified"] = True
                         _save_state()
                     dl_txt = f"{days_left} дн" if isinstance(days_left, int) else "—"
-                    _notify(f"💵 БУСТЕР: ролик набрал {views_str} → выплата {b_cur}{payout}!\n"
+                    tk, ch = _tg_creds()
+                    body = (f"💵 БУСТЕР: ролик набрал {views_str} → выплата {b_cur}{payout}!\n"
                             f"«{(clip.get('title') or '')[:70]}»\n"
-                            f"Сдай на выплату (окно: {dl_txt}): {b_form}\n"
-                            f"Вопросы: {b_contact}")
+                            f"Окно сдачи: {dl_txt}. Вопросы: {b_contact}\n"
+                            f"Жми «📤 Сдать» — соберу пакет и залью запись на Drive сам.")
+                    if tk and ch:
+                        # кнопка запускает флоу сдачи: запись статистики → Drive → готовый пакет
+                        _call(tk, "sendMessage", {"chat_id": ch, "text": body,
+                              "reply_markup": {"inline_keyboard": [[
+                                  {"text": "📤 Сдать на выплату", "callback_data": f"b:sub:{clip['id']}"}]]}})
+                    else:
+                        _notify(body)
                 if (isinstance(days_left, int) and 0 <= days_left <= 2
                         and not clip.get("buster_payout_urgent_notified")):
                     with _LOCK:
@@ -1252,6 +1385,26 @@ def accounts_del(body: AccountDel):
         st["accounts"] = [a for a in st["accounts"] if a["id"] != body.id]
         st["plan"] = [p for p in st["plan"]
                       if p["account_id"] != body.id or p["status"] in ("posted", "skipped")]
+        _save_state()
+    return {"ok": True}
+
+
+class AccountPayoutIn(BaseModel):
+    id: str
+    wallet: str = ""
+    login: str = ""
+
+
+@app.post("/accounts/payout")
+def accounts_payout(body: AccountPayoutIn):
+    """USDT-кошелёк (TRC-20) и логин канала для автопакета выплаты buster."""
+    with _LOCK:
+        st = _load_state()
+        acc = next((a for a in st["accounts"] if a["id"] == body.id), None)
+        if not acc:
+            return JSONResponse({"error": "аккаунт не найден"}, status_code=404)
+        acc["payout_wallet"] = body.wallet.strip()
+        acc["login"] = body.login.strip()
         _save_state()
     return {"ok": True}
 

@@ -43,7 +43,9 @@ TOKEN_URL = "https://oauth2.googleapis.com/token"
 UPLOAD_URL = ("https://www.googleapis.com/upload/youtube/v3/videos"
               "?uploadType=resumable&part=snippet,status")
 VIDEOS_URL = "https://www.googleapis.com/youtube/v3/videos"
-SCOPES = "https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly"
+SCOPES = ("https://www.googleapis.com/auth/youtube.upload "
+          "https://www.googleapis.com/auth/youtube.readonly "
+          "https://www.googleapis.com/auth/drive.file")   # +Drive для заливки записи статистики (buster)
 TITLE_LIMIT = 100   # YouTube hard limit; over → API 400 "Invalid title"
 
 
