@@ -24,6 +24,7 @@ single bad moment abort the whole job — failures are skipped and logged.
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -885,7 +886,8 @@ def render_clips(
     # Два клипа параллельно: один ffmpeg не загружает все ядра, на 4-ядернике
     # это даёт ~1.6-1.8x к скорости всей пачки (жалоба «слишком долго режется»).
     import concurrent.futures as _fut
-    with _fut.ThreadPoolExecutor(max_workers=2) as pool:
+    _rworkers = int(settings.get("render_parallel") or min(4, os.cpu_count() or 2))
+    with _fut.ThreadPoolExecutor(max_workers=max(1, _rworkers)) as pool:
         futures = [pool.submit(_do_moment, i, m) for i, m in enumerate(moments, start=1)]
         # Одна упавшая нарезка НЕ должна ронять весь батч: f.result() ре-кидает
         # исключение воркера. Ловим поштучно → битый момент становится None и

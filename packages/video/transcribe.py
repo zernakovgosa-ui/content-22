@@ -220,7 +220,8 @@ def _build_multipart(
 
 
 def _transcribe_openai_compatible(
-    url: str, api_key, model: str, audio_path: Path, timeout: int = 300
+    url: str, api_key, model: str, audio_path: Path, timeout: int = 300,
+    start_ki: int = 0,
 ) -> Dict[str, Any]:
     """Call an OpenAI-compatible /audio/transcriptions endpoint; return parsed JSON.
 
@@ -240,7 +241,7 @@ def _transcribe_openai_compatible(
     ]
     body, ctype = _build_multipart(fields, audio_path.name, file_bytes)
     last_err: Optional[str] = None
-    ki = 0
+    ki = start_ki
     max_tries = max(3, len(keys) + 2)
     for attempt in range(1, max_tries + 1):
         key = keys[ki % len(keys)]
@@ -335,25 +336,25 @@ def _transcribe_cloud(
 
     def _one(idx: int, audio_path: Path, offset: float) -> Tuple[int, str, List[Dict], List[Dict]]:
         try:
-            res = _transcribe_openai_compatible(url, api_key, model, audio_path)
+            res = _transcribe_openai_compatible(url, api_key, model, audio_path, start_ki=idx)
             text, segments, words = _parse_openai_json(res, offset)
             return idx, text, segments, words
         except Exception as e:
             print(f"[stt] кусок {idx + 1}/{n} не распознан: {str(e)[:80]}", flush=True)
             return idx, "", [], []
 
+    nkeys = len(api_key) if isinstance(api_key, (list, tuple)) else 1
     results: List[Optional[Tuple[int, str, List[Dict], List[Dict]]]] = [None] * n
     if n <= 1:
         if chunks:
             results[0] = _one(0, chunks[0][0], chunks[0][1])
-    elif n > SEQ_CHUNK_THRESHOLD:
-        for i, (ap, off) in enumerate(chunks):
-            results[i] = _one(i, ap, off)
-            if i < n - 1:
-                time.sleep(CHUNK_SPACING_S)
     else:
+        # Параллелим ВСЕ куски: ключей много → по числу ключей (каждый кусок стартует
+        # со СВОЕГО ключа через start_ki=idx, лимит одного ключа не ловим). Один ключ →
+        # скромная параллель, чтоб не упереться в его rate-limit.
+        workers = min(n, (nkeys if nkeys > 1 else CHUNK_UPLOAD_WORKERS), 6)
         import concurrent.futures
-        with concurrent.futures.ThreadPoolExecutor(max_workers=min(CHUNK_UPLOAD_WORKERS, n)) as pool:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
             futs = {pool.submit(_one, i, ap, off): i for i, (ap, off) in enumerate(chunks)}
             for fut in concurrent.futures.as_completed(futs):
                 r = fut.result()
