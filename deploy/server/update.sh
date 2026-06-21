@@ -7,7 +7,7 @@ cd /opt/content
 echo "== подтягиваю код =="
 git pull --ff-only
 echo "== проверяю импорт (синтаксис) =="
-PYTHONPATH=/opt/content .venv/bin/python -c "import clipper.server, packages.video.clip_renderer, clipper.planner, packages.agents.llm_client"
+PYTHONPATH=/opt/content .venv/bin/python -c "import clipper.server, clipper.downloader, clipper.planner, packages.video.clip_renderer, packages.video.transcribe, packages.agents.llm_client"
 echo "== импорт OK, перезапускаю клиппер =="
 systemctl restart clipper
 sleep 2
