@@ -244,8 +244,12 @@ def _via_cobalt(url: str, dest_dir: Path, settings: Dict[str, Any],
     hosts = ([self_host] if self_host else []) + [h.rstrip("/") for h in instances if h]
     api_key = (settings.get("cobalt_api_key") or "").strip()
     max_h = str(settings.get("max_height", 1080) or 1080)
-    body = {"url": url, "videoQuality": max_h, "youtubeVideoCodec": "h264",
-            "youtubeVideoContainer": "mp4", "downloadMode": "auto",
+    # vp9 (не h264): у YouTube h264 часто capается на 720p, а 1080p+ есть только в
+    # vp9/av1. Берём vp9 → настоящий 1080p исходник → после вертикального кропа
+    # картинка резче (h264 давал мыльные 720). Кодек/качество настраиваются в settings.
+    vcodec = (settings.get("yt_video_codec") or "vp9").strip()
+    body = {"url": url, "videoQuality": max_h, "youtubeVideoCodec": vcodec,
+            "youtubeVideoContainer": "auto", "downloadMode": "auto",
             "filenameStyle": "basic", "alwaysProxy": True}
     extra = {"Authorization": f"Api-Key {api_key}"} if api_key else None
 
@@ -454,8 +458,7 @@ def _via_ytdlp(url: str, dest_dir: Path, settings: Dict[str, Any],
                 pass
 
     opts = {
-        "format": ("bestvideo[ext=mp4][height<=1080]+bestaudio[ext=m4a]/"
-                   "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best"),
+        "format": ("bestvideo[height<=1080]+bestaudio/best[height<=1080]/best"),
         "merge_output_format": "mp4",
         "outtmpl": str(dest_dir / "%(title).70B [%(id)s].%(ext)s"),
         "windowsfilenames": True,

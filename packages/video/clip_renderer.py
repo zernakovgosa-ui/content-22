@@ -199,6 +199,15 @@ def _crop_geometry_wide(src_w: int, src_h: int, face_nx: Optional[float],
 # ----------------------------------------------------------------------------
 # Captions
 # ----------------------------------------------------------------------------
+_CAP_PUNCT = re.compile(r"[.,!?;:…\"'«»“”]+")
+
+
+def _clean_caption(s: str) -> str:
+    """Стиль субтитров для шортсов: строчными, без точек/запятых/прочей пунктуации
+    (так эстетичнее, как у топовых нарезок). Дефисы внутри слов оставляем."""
+    return _CAP_PUNCT.sub("", (s or "")).strip().lower()
+
+
 def _clip_caption_lines(transcript: Dict[str, Any], start: float, end: float, max_lines: int = 40) -> List[Dict]:
     """Transcript segments overlapping [start,end], in clip-relative time."""
     caps: List[Dict] = []
@@ -208,7 +217,7 @@ def _clip_caption_lines(transcript: Dict[str, Any], start: float, end: float, ma
             e = min(end, float(seg["end"]))
         except Exception:
             continue
-        text = (seg.get("text") or "").strip()
+        text = _clean_caption(seg.get("text") or "")
         if not text or (e - s) < 0.2:
             continue
         caps.append({"a": round(s - start, 2), "b": round(e - start, 2), "text": text})
@@ -243,7 +252,7 @@ def _word_chunks(transcript: Dict[str, Any], start: float, end: float,
             ws = float(w["start"]); we = float(w["end"])
         except Exception:
             continue
-        txt = (w.get("word") or w.get("text") or "").strip()
+        txt = _clean_caption(w.get("word") or w.get("text") or "")
         if not txt or we <= start or ws >= end:
             continue
         ws, we = max(ws, start), min(we, end)
