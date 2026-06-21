@@ -501,7 +501,11 @@ def _via_ytdlp(url: str, dest_dir: Path, settings: Dict[str, Any],
         "fragment_retries": 10,
         "socket_timeout": 60,
         "source_address": "0.0.0.0",   # форс IPv4 — лечит повисший IPv6 в РФ-сетях
-        "extractor_args": {"youtube": {"player_client": ["web_safari", "android", "web"]}},
+        # Несколько player-клиентов: tv_embedded/mediaconnect/android_vr ОБХОДЯТ
+        # возрастной гейт без входа; остальные — обычный фолбэк. yt-dlp сам возьмёт
+        # тот, что отдаёт потоки → возрастные ролики качаются без «нельзя».
+        "extractor_args": {"youtube": {"player_client":
+            ["tv_embedded", "mediaconnect", "android_vr", "web_safari", "android", "web"]}},
         "quiet": True,
         "no_warnings": True,
         "progress_hooks": [_hook],
@@ -565,14 +569,9 @@ def download_youtube(url: str, dest_dir: str | Path, progress_cb=None,
             print(f"[clipper] метод {method} не дал результата, дальше", flush=True)
         except Exception as e:
             msg = str(e)
-            low = msg.lower()
-            # Узкие фразы YouTube, а не голая подстрока "age" (ловила page/usage/
-            # message/storage и ложно обрывала всю цепочку методов).
-            if ("sign in to confirm" in low or "age-restricted" in low
-                    or "age restricted" in low or "confirm your age" in low
-                    or "inappropriate for some" in low):
-                raise RuntimeError("YouTube требует вход (возрастное ограничение) — "
-                                   "этот ролик скачать нельзя")
+            # Возрастной гейт БОЛЬШЕ НЕ обрывает цепочку: пусть пробуют остальные
+            # методы (cobalt с poToken часто берёт 18+, а yt-dlp идёт с клиентами-
+            # обходами гейта). Если не смог реально никто — ниже общий текст ошибки.
             last_ytdlp_err = msg[:160]
             print(f"[clipper] метод {method} упал: {msg[:120]}", flush=True)
             continue
