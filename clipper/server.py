@@ -251,7 +251,7 @@ def _llm_polish_clips(clips: List[Dict[str, Any]], source_name: str, cat_label: 
     видео. None при любой ошибке — тогда работает детерминированный фолбэк."""
     prov, key = (None, None)
     for k, p in (("anthropic_api_key", "anthropic"), ("openai_api_key", "openai"),
-                 ("groq_api_key", "groq")):
+                 ("gemini_api_key", "gemini"), ("groq_api_key", "groq")):
         if settings.get(k):
             prov, key = p, settings[k]
             break
@@ -347,7 +347,7 @@ def _process_video(item: Dict[str, Any]) -> None:
     dur = true_dur
     prov, key = (None, None)
     for k, p in (("anthropic_api_key", "anthropic"), ("openai_api_key", "openai"),
-                 ("groq_api_key", "groq")):
+                 ("gemini_api_key", "gemini"), ("groq_api_key", "groq")):
         if settings.get(k):
             prov, key = p, settings[k]
             break

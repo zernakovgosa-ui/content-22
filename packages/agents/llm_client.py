@@ -25,6 +25,10 @@ GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"  # OpenAI-compatibl
 ANTHROPIC_MODEL = "claude-sonnet-4-6"
 OPENAI_MODEL = "gpt-4o"
 GROQ_MODEL = "llama-3.3-70b-versatile"  # free tier, strong, multilingual (RU ok)
+# Gemini через OpenAI-совместимый эндпоинт Google — бесплатный ключ на aistudio.google.com,
+# умнее бесплатного Groq, щедрый дневной лимит. Модель меняется в settings (gemini_model).
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+GEMINI_MODEL = "gemini-2.5-flash"
 
 
 class LLMError(Exception):
@@ -153,9 +157,9 @@ def complete(
             raise LLMError(f"empty Anthropic response: {res}")
         return text.strip()
 
-    if provider in ("openai", "groq"):
-        # Both speak the OpenAI chat-completions schema — only URL + model differ.
-        default_model = OPENAI_MODEL if provider == "openai" else GROQ_MODEL
+    if provider in ("openai", "groq", "gemini"):
+        # Все говорят на OpenAI chat-completions схеме — различаются URL + модель.
+        default_model = {"openai": OPENAI_MODEL, "groq": GROQ_MODEL, "gemini": GEMINI_MODEL}[provider]
         payload = {
             "model": model or default_model,
             "max_tokens": max_tokens,
@@ -167,6 +171,9 @@ def complete(
         }
         if provider == "groq":
             res = _post_groq(payload, fallback_key=api_key)   # пул ключей + ротация при 429
+        elif provider == "gemini":
+            headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+            res = _post(GEMINI_URL, headers, payload)
         else:
             headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
             res = _post(OPENAI_URL, headers, payload)
