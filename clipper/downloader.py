@@ -260,14 +260,20 @@ def _stream(url: str, dest: Path, ua: str, progress_cb=None,
 
 
 # ── Метод 1: cobalt (POST /, alwaysProxy → tunnel) ──────────────────────────
+_LAST_COBALT_HOST: Optional[str] = None   # последний рабочий cobalt-инстанс → пробуем первым
+
+
 def _via_cobalt(url: str, dest_dir: Path, settings: Dict[str, Any],
                 progress_cb=None) -> Optional[Dict[str, Any]]:
+    global _LAST_COBALT_HOST
     ua = _ua(settings)
     vid = _video_id(url) or "video"
     self_host = (settings.get("cobalt_self_host") or "").strip().rstrip("/")
     instances = settings.get("cobalt_instances") or DEFAULT_COBALT
     # Свой инстанс — ПЕРВЫМ и доверенным (без turnstile-пробы, с запасом на холодный старт).
     hosts = ([self_host] if self_host else []) + [h.rstrip("/") for h in instances if h]
+    if _LAST_COBALT_HOST and _LAST_COBALT_HOST in hosts:   # рабочий с прошлого раза — вперёд
+        hosts = [_LAST_COBALT_HOST] + [h for h in hosts if h != _LAST_COBALT_HOST]
     api_key = (settings.get("cobalt_api_key") or "").strip()
     max_h = str(settings.get("max_height", 1080) or 1080)
     # vp9 (не h264): у YouTube h264 часто capается на 720p, а 1080p+ есть только в
@@ -319,6 +325,7 @@ def _via_cobalt(url: str, dest_dir: Path, settings: Dict[str, Any],
             dest = dest_dir / _safe_name(_oembed_title(url, ua), vid)
             # Докачка с возобновлением: при обрыве _stream сам берёт свежий туннель.
             if _stream(url0, dest, ua, progress_cb, refresh=_fresh_tunnel):
+                _LAST_COBALT_HOST = host
                 print(f"[clipper] cobalt ✓ через {host}", flush=True)
                 return {"path": str(dest), "file": dest.name,
                         "title": dest.stem.rsplit(" [", 1)[0],

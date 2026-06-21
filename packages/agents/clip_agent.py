@@ -376,6 +376,9 @@ class ClipAgent(BaseAgent):
                 e_hint = float(c.get("end"))
             except (TypeError, ValueError):
                 continue
+            if duration:                       # ИИ иногда даёт время за пределами видео
+                s_hint = max(0.0, min(s_hint, duration))
+                e_hint = max(0.0, min(e_hint, duration))
             if e_hint <= s_hint:
                 continue
             hook = str(c.get("hook") or "").strip()

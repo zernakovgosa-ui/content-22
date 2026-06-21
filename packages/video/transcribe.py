@@ -221,12 +221,15 @@ def _build_multipart(
 
 def _transcribe_openai_compatible(
     url: str, api_key, model: str, audio_path: Path, timeout: int = 300,
-    start_ki: int = 0,
+    start_ki: int = 0, language: str = "",
 ) -> Dict[str, Any]:
     """Call an OpenAI-compatible /audio/transcriptions endpoint; return parsed JSON.
 
     api_key может быть СТРОКОЙ или СПИСКОМ ключей: при 429 (лимит Groq) сразу
     пробуем следующий ключ — это и есть авто-ротация для длинных видео.
+    language — явный язык-подсказка (ru/en/…): без него Whisper определяет язык
+    на КАЖДОМ 10-мин куске сам, и на тихих/музыкальных кусках срывается в чужой
+    язык → мусорный транскрипт и рассинхрон субтитров.
     """
     keys = [k for k in (api_key if isinstance(api_key, (list, tuple)) else [api_key]) if k]
     if not keys:
@@ -239,6 +242,8 @@ def _transcribe_openai_compatible(
         ("timestamp_granularities[]", "word"),
         ("temperature", "0"),
     ]
+    if language:
+        fields.append(("language", language))
     body, ctype = _build_multipart(fields, audio_path.name, file_bytes)
     last_err: Optional[str] = None
     ki = start_ki
@@ -326,7 +331,8 @@ CHUNK_SPACING_S = 1.5         # пауза между последователь
 
 
 def _transcribe_cloud(
-    url: str, api_key: str, model: str, chunks: List[Tuple[Path, float]]
+    url: str, api_key: str, model: str, chunks: List[Tuple[Path, float]],
+    language: str = "",
 ) -> Dict[str, Any]:
     """Transcribe every audio chunk and merge results with offsets applied.
 
@@ -335,12 +341,14 @@ def _transcribe_cloud(
     отваливалась, и из часа распознавалось ~7 минут (→ субтитры только в начале).
     Теперь: ≤3 кусков — параллельно (быстро), >3 — ПОСЛЕДОВАТЕЛЬНО с паузой (больше
     проходит). Падение одного куска НЕ роняет остальные — берём что распозналось.
+    language — явный язык для всех кусков (стабильнее, чем авто-детект на каждом).
     """
     n = len(chunks)
 
     def _one(idx: int, audio_path: Path, offset: float) -> Tuple[int, str, List[Dict], List[Dict]]:
         try:
-            res = _transcribe_openai_compatible(url, api_key, model, audio_path, start_ki=idx)
+            res = _transcribe_openai_compatible(url, api_key, model, audio_path,
+                                                start_ki=idx, language=language)
             text, segments, words = _parse_openai_json(res, offset)
             return idx, text, segments, words
         except Exception as e:
@@ -461,6 +469,10 @@ def transcribe(source_path: str | Path, settings: Optional[Dict[str, Any]] = Non
         if k and k not in groq_keys:
             groq_keys.append(k)
     openai_key = settings.get("openai_api_key") or os.getenv("OPENAI_API_KEY") or ""
+    # Язык-подсказка Whisper. По умолчанию ru (основной контент завода русский) —
+    # стабильнее, чем авто-детект на каждом куске. Для иноязычных видео можно
+    # задать stt_language ("en"/…) или "" (авто) в settings.json.
+    stt_lang = (settings.get("stt_language", "ru") or "").strip().lower()
 
     if not source_path.exists():
         return {"ok": False, "text": "", "segments": [], "words": [],
@@ -501,11 +513,11 @@ def transcribe(source_path: str | Path, settings: Optional[Dict[str, Any]] = Non
                 if provider == "groq":
                     if not groq_keys:
                         continue
-                    out = _transcribe_cloud(GROQ_URL, groq_keys, GROQ_MODEL, _chunks())
+                    out = _transcribe_cloud(GROQ_URL, groq_keys, GROQ_MODEL, _chunks(), language=stt_lang)
                 elif provider == "openai":
                     if not openai_key:
                         continue
-                    out = _transcribe_cloud(OPENAI_URL, openai_key, OPENAI_MODEL, _chunks())
+                    out = _transcribe_cloud(OPENAI_URL, openai_key, OPENAI_MODEL, _chunks(), language=stt_lang)
                 elif provider == "whispercpp":
                     out = _transcribe_whispercpp(source_path, workdir, settings)
                 else:

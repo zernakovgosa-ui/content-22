@@ -195,8 +195,14 @@ document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
 });
 
 async function api(path, body){
-  const r = await fetch(path, body ? {method:'POST',headers:{'Content-Type':'application/json'},
-                                      body:JSON.stringify(body)} : undefined);
+  let r;
+  try {
+    r = await fetch(path, body ? {method:'POST',headers:{'Content-Type':'application/json'},
+                                  body:JSON.stringify(body)} : undefined);
+  } catch(e) {
+    // Сеть/сервер недоступны (рестарт после деплоя) — не роняем кнопки молча.
+    return {error:'Сервер недоступен — возможно идёт перезапуск. Подожди ~10с и обнови.', _offline:true};
+  }
   let j = {};
   try { j = await r.json(); } catch(e) {}
   if (!r.ok && !j.error) {
@@ -351,7 +357,14 @@ function render(){
   }
 }
 
-async function refresh(){ try{ S = await api('/state'); render(); }catch(e){} }
+async function refresh(){
+  const j = await api('/state');
+  if (j && j._offline) {       // показать «сервер недоступен», не стирая данные
+    const tg=$('tg'); if(tg){ tg.textContent='⚠ сервер недоступен (перезапуск?)'; tg.className='tg pill err'; }
+    return;
+  }
+  if (j && !j.error) { S = j; render(); }
+}
 
 async function saveCpm(){
   const v = Math.max(1, Math.min(20, parseInt($('cpm').value)||3));
