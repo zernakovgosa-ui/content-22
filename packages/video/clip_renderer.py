@@ -702,6 +702,7 @@ def _render_one_clip(
     ffmpeg: str, src: Path, start: float, dur: float, caps: List[Dict],
     framing: Dict[str, Any], workdir: Path, out_path: Path,
     q: Dict[str, str], hook_title: str = "", cta: bool = False,
+    blur_regions: Optional[List[Dict[str, Any]]] = None,
 ) -> bool:
     cw, ch, cx, cy = framing["fill"]
 
@@ -736,13 +737,32 @@ def _render_one_clip(
     # чтобы lanczos+cas не усиливали зерно), полные chroma-флаги у swscale,
     # CAS-резкость по степени растяжки.
     SCALE_FLAGS = "lanczos+accurate_rnd+full_chroma_int+full_chroma_inp"
+    # Блюр названий контор: размываем прямоугольники В ИСХОДНИКЕ (до кропа), поэтому
+    # он переживает кроп/скейл и НЕ задевает субтитры (рисуются поверх позже).
+    vsrc = "[0:v]"
+    blur_fc = ""
+    for j, r in enumerate(blur_regions or []):
+        try:
+            bx, by, bw, bh = int(r["x"]), int(r["y"]), int(r["w"]), int(r["h"])
+            bt0, bt1 = float(r["t0"]), float(r["t1"])
+        except Exception:
+            continue
+        if bw < 8 or bh < 6:
+            continue
+        sig = max(8, min(40, bh // 4))
+        kp, cp, bb, nx = f"[bk{j}]", f"[bc{j}]", f"[bb{j}]", f"[bo{j}]"
+        blur_fc += (f"{vsrc}split{kp}{cp};"
+                    f"{cp}crop={bw}:{bh}:{bx}:{by},gblur=sigma={sig}{bb};"
+                    f"{kp}{bb}overlay={bx}:{by}:enable='between(t,{bt0:.2f},{bt1:.2f})'{nx};")
+        vsrc = nx
     w2, h2, x2, y2 = framing.get("wide", framing["fill"])
     if framing.get("mode") == "wide" and w2 > cw + 8:
         up_fg = WIDTH / max(w2, 1)
         cas_fg = 0.6 if up_fg >= 1.8 else (0.5 if up_fg >= 1.2 else 0.3)
         # Блюр-фон считаем на уменьшенной картинке — в ~4 раза дешевле, виду не вредит.
         fc = (
-            f"[0:v]split=2[bgs][fgs];"
+            blur_fc +
+            f"{vsrc}split=2[bgs][fgs];"
             f"[bgs]crop={cw}:{ch}:{cx}:{cy},scale=270:480,boxblur=10:2,"
             f"scale={WIDTH}:{HEIGHT}:flags=bilinear,setsar=1[bg];"
             f"[fgs]crop={w2}:{h2}:{x2}:{y2},hqdn3d=1.5:1.5:6:6,"
@@ -752,7 +772,7 @@ def _render_one_clip(
     else:
         up = WIDTH / max(cw, 1)
         cas = 0.6 if up >= 1.8 else (0.5 if up >= 1.2 else 0.3)
-        fc = (f"[0:v]crop={cw}:{ch}:{cx}:{cy},hqdn3d=1.5:1.5:6:6,"
+        fc = (blur_fc + f"{vsrc}crop={cw}:{ch}:{cx}:{cy},hqdn3d=1.5:1.5:6:6,"
               f"scale={WIDTH}:{HEIGHT}:flags={SCALE_FLAGS},cas={cas},setsar=1[vbase]")
 
     cur = "[vbase]"
@@ -820,6 +840,13 @@ def render_clips(
 
     hashtags = meta.get("hashtags") or []
     cta_on = (meta.get("category") == "trezzy")   # CTA-плашки только для TREZZY
+    # Визуальный OCR-блюр названий казино/контор — ТОЛЬКО для buster (там казино/
+    # ставки/скины вылезают на экран). Текст субтитров НЕ трогаем. Флаг casino_filter_enabled.
+    try:
+        from . import brand_filter as _bf
+        blur_on = (meta.get("category") == "buster") and _bf.filter_enabled(settings)
+    except Exception:
+        blur_on = False
 
     def _do_moment(i: int, m: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         try:
@@ -854,13 +881,25 @@ def render_clips(
 
             title = (m.get("title") or "").strip()
             out_path = job_dir / f"clip_{i:02d}.mp4"
+            # Детект названий казино/контор на кадрах (только buster) → регионы блюра.
+            blur_regions: List[Dict[str, Any]] = []
+            if blur_on:
+                try:
+                    from . import casino_blur
+                    blur_regions = casino_blur.detect_brand_regions(
+                        ffmpeg, source_path, start, dur, src_w, src_h, settings)
+                except Exception as e:
+                    print(f"[casino] детектор пропущен: {str(e)[:80]}", flush=True)
             t_clip = time.time()
             print(f"[clip] клип {i}/{len(moments)}: {dur:.0f}с, "
-                  f"субтитры: {len(caps)} чанк(ов) — рендерю...", flush=True)
+                  f"субтитры: {len(caps)} чанк(ов)"
+                  + (f", блюр-зон: {len(blur_regions)}" if blur_regions else "")
+                  + " — рендерю...", flush=True)
             # Хук-заголовок сверху отключён по решению владельца — лишний текст
             # в кадре не нужен, остаются только караоке-субтитры.
             if not _render_one_clip(ffmpeg, source_path, start, dur, caps, framing, workdir,
-                                    out_path, q, hook_title="", cta=cta_on):
+                                    out_path, q, hook_title="", cta=cta_on,
+                                    blur_regions=blur_regions):
                 return None
             if not _verify(ffmpeg, out_path):
                 print(f"[clip] clip {i} failed decode verification; skipping")

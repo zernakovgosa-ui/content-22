@@ -51,7 +51,8 @@ cd "$APP"
 python3 -m venv .venv
 ./.venv/bin/pip install --upgrade pip -q
 ./.venv/bin/pip install -q fastapi==0.115.0 "uvicorn[standard]==0.30.6" pydantic==2.9.2 \
-    python-dotenv==1.0.1 "pillow>=11" imageio-ffmpeg opencv-python-headless yt-dlp
+    python-dotenv==1.0.1 "pillow>=11" imageio-ffmpeg opencv-python-headless yt-dlp \
+    rapidocr-onnxruntime   # OCR для блюра названий казино/контор (buster)
 
 echo "==> [7/10] рабочие папки + settings.json"
 mkdir -p "$APP/clipper/data" "$APP/clipper/output/jobs" "$APP/data" \
