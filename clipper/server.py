@@ -244,6 +244,22 @@ def _polish_meta(clip: Dict[str, Any]) -> Dict[str, Any]:
     return {"title": title or "Shorts", "description": desc, "hashtags": tags}
 
 
+def _clip_text(transcript: Dict[str, Any], start: float, end: float, limit: int = 400) -> str:
+    """Реальный текст клипа из транскрипта (сегменты в окне [start,end]) — чтобы LLM
+    придумывал название по СУТИ клипа, а не по одному короткому хуку."""
+    parts: List[str] = []
+    for s in (transcript or {}).get("segments") or []:
+        try:
+            if float(s.get("end", 0)) <= start or float(s.get("start", 0)) >= end:
+                continue
+        except Exception:
+            continue
+        t = (s.get("text") or "").strip()
+        if t:
+            parts.append(t)
+    return " ".join(parts)[:limit]
+
+
 def _llm_polish_clips(clips: List[Dict[str, Any]], source_name: str, cat_label: str,
                       settings: Dict[str, Any],
                       src_desc: str = "") -> Optional[List[Dict[str, Any]]]:
@@ -260,12 +276,24 @@ def _llm_polish_clips(clips: List[Dict[str, Any]], source_name: str, cat_label: 
     try:
         from packages.agents import llm_client
         lines = "\n".join(
-            f"{i + 1}. заголовок: {c.get('title') or '—'} | хук: {(c.get('hook') or '—')[:100]}"
+            f"{i + 1}. хук: {(c.get('hook') or '—')[:80]}\n"
+            f"   текст клипа: {(c.get('text') or c.get('title') or '—')[:380]}"
             for i, c in enumerate(clips))
-        system = ("Ты — редактор вирусных Shorts. Для каждого клипа сделай цепляющее "
-                  "НАЗВАНИЕ (до 90 символов, без кавычек, по-русски, интригующее), короткое "
-                  "ОПИСАНИЕ (1-2 предложения) и 4-6 ХЕШТЕГОВ (русские/английские, первым #shorts). "
-                  "Отвечай ТОЛЬКО валидным JSON.")
+        system = (
+            "Ты — топовый редактор вирусных YouTube Shorts на русском. По РЕАЛЬНОМУ тексту "
+            "каждого клипа придумай НАЗВАНИЕ, на которое невозможно не кликнуть.\n"
+            "Под КАЖДЫЙ клип сам выбери приём, который цепляет именно в этом моменте — "
+            "где-то интрига, где-то конкретный факт/ставка, где-то эмоция; не лепи один шаблон на все.\n"
+            "Что делает название Shorts вирусным:\n"
+            "— цепляет за секунду: интрига, эмоция, разрыв шаблона или недосказанность («и тут он…»);\n"
+            "— конкретика и ставка (что на кону), а НЕ общие слова («финальный матч» — слабо);\n"
+            "— живой разговорный язык блогеров, без канцелярита, без кавычек;\n"
+            "— до 80 символов, по-русски;\n"
+            "— НИКАКИХ выдумок: только то, что реально звучит в тексте клипа.\n"
+            "Примеры сильных: «поставил всё на один бросок», «не ожидал такого в чате», "
+            "«этот момент порвал стрим».\n"
+            "Для каждого клипа: title, description (1-2 живых предложения), "
+            "hashtags (4-6, первым #shorts). Отвечай ТОЛЬКО валидным JSON.")
         desc_block = f"\nОписание исходного ролика (используй как контекст):\n{src_desc[:700]}\n" \
             if src_desc else ""
         user = (f"Источник: {source_name} (категория: {cat_label}).{desc_block} Клипы:\n{lines}\n\n"
@@ -387,6 +415,9 @@ def _process_video(item: Dict[str, Any]) -> None:
     clips_out = res.get("clips", [])
     print(f"[clipper] нарезано клипов: {len(clips_out)} (из {len(moments)} моментов)", flush=True)
 
+    # Реальный текст каждого клипа → LLM делает название по СУТИ, а не по тонкому хуку.
+    for c in clips_out:
+        c["text"] = _clip_text(transcript, c.get("start") or 0, c.get("end") or 0)
     # Один LLM-проход: цепляющие названия/описания/хештеги для всех клипов сразу.
     polished = _llm_polish_clips(clips_out, topic, cat_label, settings,
                                  src_desc=item.get("src_desc") or "")
