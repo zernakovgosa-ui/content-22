@@ -550,6 +550,15 @@ def _via_ytdlp(url: str, dest_dir: Path, settings: Dict[str, Any],
     proxy = (settings.get("ytdlp_proxy") or settings.get("https_proxy") or "").strip()
     if proxy:
         opts["proxy"] = proxy
+    # cookies для ВОЗРАСТНЫХ/закрытых роликов: YouTube не отдаёт 18+ без логина
+    # («Sign in to confirm your age»). Экспорт cookies.txt из браузера → путь в
+    # settings["ytdlp_cookies"] или дефолт clipper/data/yt_cookies.txt.
+    ck = (settings.get("ytdlp_cookies") or "").strip()
+    if not ck:
+        _dflt = Path(__file__).resolve().parent / "data" / "yt_cookies.txt"
+        ck = str(_dflt) if _dflt.exists() else ""
+    if ck and Path(ck).exists():
+        opts["cookiefile"] = ck
 
     with yt_dlp.YoutubeDL(opts) as ydl:
         info = ydl.extract_info(url, download=True)
