@@ -153,6 +153,26 @@ def _notify(text: str) -> None:
                 print("[clipper] notify failed (3 попытки):", repr(e))
 
 
+def _notify_kb(text: str, keyboard: Dict[str, Any]) -> bool:
+    """Сообщение с inline-кнопками владельцу, до 3 попыток. True — доставлено.
+    Нужно для важных уведомлений с кнопкой (напр. «📤 Сдать»): флаг 'уведомлён'
+    ставится ТОЛЬКО при успехе, иначе сообщение терялось при первом сбое сети."""
+    token, chat = _tg_creds()
+    if not (token and chat):
+        return False
+    for attempt in range(1, 4):
+        try:
+            _call(token, "sendMessage", {"chat_id": chat, "text": text[:3900],
+                                         "reply_markup": keyboard})
+            return True
+        except Exception as e:
+            if attempt < 3:
+                time.sleep(5 * attempt)
+            else:
+                print("[clipper] notify(kb) failed (3 попытки):", repr(e))
+    return False
+
+
 def _send_video_retry(token: str, chat: str, video: Path, caption: str, kb) -> bool:
     """Отправка видео в TG с 3 попытками (SSL-таймауты — обычное дело)."""
     for attempt in range(1, 4):
@@ -883,22 +903,19 @@ def _check_hot_clips() -> None:
                 days_left = days_left_to_payout(clip_posted_at.get(clip["id"]), b_window, now)
                 window_open = (days_left is None) or (days_left >= 0)
                 if window_open and not clip.get("buster_payout_notified"):
-                    with _LOCK:
-                        clip["buster_payout_notified"] = True
-                        _save_state()
                     dl_txt = f"{days_left} дн" if isinstance(days_left, int) else "—"
-                    tk, ch = _tg_creds()
                     body = (f"💵 БУСТЕР: ролик набрал {views_str} → выплата {b_cur}{payout}!\n"
                             f"«{(clip.get('title') or '')[:70]}»\n"
                             f"Окно сдачи: {dl_txt}. Вопросы: {b_contact}\n"
                             f"Жми «📤 Сдать» — соберу пакет и залью запись на Drive сам.")
-                    if tk and ch:
-                        # кнопка запускает флоу сдачи: запись статистики → Drive → готовый пакет
-                        _call(tk, "sendMessage", {"chat_id": ch, "text": body,
-                              "reply_markup": {"inline_keyboard": [[
-                                  {"text": "📤 Сдать на выплату", "callback_data": f"b:sub:{clip['id']}"}]]}})
-                    else:
-                        _notify(body)
+                    kb = {"inline_keyboard": [[
+                        {"text": "📤 Сдать на выплату", "callback_data": f"b:sub:{clip['id']}"}]]}
+                    # флаг ставим ТОЛЬКО после успешной доставки (с ретраями), иначе это
+                    # единственное уведомление с кнопкой терялось при первом сбое сети.
+                    if _notify_kb(body, kb):
+                        with _LOCK:
+                            clip["buster_payout_notified"] = True
+                            _save_state()
                 if (isinstance(days_left, int) and 0 <= days_left <= 2
                         and not clip.get("buster_payout_urgent_notified")):
                     with _LOCK:

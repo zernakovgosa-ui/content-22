@@ -38,15 +38,18 @@ def _get_ocr():
     global _OCR, _OCR_TRIED
     if _OCR_TRIED:
         return _OCR
-    _OCR_TRIED = True
-    try:
-        from rapidocr_onnxruntime import RapidOCR
-        _OCR = RapidOCR()
-        print("[casino] OCR-движок загружен (RapidOCR)", flush=True)
-    except Exception as e:
-        print(f"[casino] OCR недоступен ({str(e)[:90]}) — визуальный блюр пропущен "
-              f"(pip install rapidocr-onnxruntime)", flush=True)
-        _OCR = None
+    with _OCR_LOCK:                    # двойная проверка под локом — без дублей инициализации/гонки
+        if _OCR_TRIED:
+            return _OCR
+        try:
+            from rapidocr_onnxruntime import RapidOCR
+            _OCR = RapidOCR()
+            print("[casino] OCR-движок загружен (RapidOCR)", flush=True)
+        except Exception as e:
+            print(f"[casino] OCR недоступен ({str(e)[:90]}) — визуальный блюр пропущен "
+                  f"(pip install rapidocr-onnxruntime)", flush=True)
+            _OCR = None
+        _OCR_TRIED = True
     return _OCR
 
 
@@ -145,10 +148,12 @@ def detect_brand_regions(
         placed = False
         for r in regions:
             if r["last_t"] >= t - time_bridge and _overlaps(r, box, slack=min(src_w, src_h) * 0.04):
-                r["x"] = min(r["x"], bx0)
-                r["y"] = min(r["y"], by0)
-                r["w"] = max(r["x"] + r["w"], bx1) - r["x"]
-                r["h"] = max(r["y"] + r["h"], by1) - r["y"]
+                # края считаем из СТАРЫХ x/y/w/h, потом присваиваем (иначе регион усыхал)
+                nx0 = min(r["x"], bx0)
+                ny0 = min(r["y"], by0)
+                nx1 = max(r["x"] + r["w"], bx1)
+                ny1 = max(r["y"] + r["h"], by1)
+                r["x"], r["y"], r["w"], r["h"] = nx0, ny0, nx1 - nx0, ny1 - ny0
                 r["last_t"] = max(r["last_t"], t)
                 placed = True
                 break

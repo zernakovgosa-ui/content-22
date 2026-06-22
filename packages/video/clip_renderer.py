@@ -795,8 +795,10 @@ def _render_one_clip(
         # Аварийный путь: если лента субтитров или CTA-плашки не понравились ffmpeg —
         # рендерим голый клип без них, клип важнее.
         print("[clip] overlay failed, rendering bare clip:", err[:200])
+        # ВАЖНО: блюр названий казино сохраняем и в фолбэке (он на [0:v], не зависит
+        # от субтитров/CTA). Иначе при сбое overlay в постинг уйдёт незамазанный бренд.
         return _render_one_clip(ffmpeg, src, start, dur, [], framing, workdir,
-                                out_path, q, hook_title="", cta=False)
+                                out_path, q, hook_title="", cta=False, blur_regions=blur_regions)
     if not ok or not out_path.exists():
         print("[clip] render failed:", err)
         return False
