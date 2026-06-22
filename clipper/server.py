@@ -1725,6 +1725,18 @@ def _startup():
             # Якорь 14-дневного окна выплаты для уже опубликованных (старые записи).
             if p.get("status") == "posted" and not p.get("posted_at"):
                 p["posted_at"] = p.get("marked_at") or datetime.now().isoformat(timespec="seconds")
+        # ОЧЕРЕДЬ: задача в 'processing' при старте = воркер был убит рестартом/крашем
+        # посреди скачивания/нарезки. Воркер берёт только 'pending', поэтому без этого
+        # она осиротеет НАВСЕГДА (ровно этот баг и случился). Возвращаем в 'pending':
+        # если не докачали — перекачать с нуля; если уже скачано — перережется.
+        for q in st["queue"]:
+            if q.get("status") == "processing":
+                q["status"] = "pending"
+                q.pop("error", None)
+                if not q.get("downloaded"):
+                    q.pop("file", None)        # частичный файл будет перекачан начисто
+                print(f"[clipper] осиротевшая задача возвращена в очередь: "
+                      f"{str(q.get('url') or q.get('file') or q.get('id'))[:60]}", flush=True)
         _save_state()
     threading.Thread(target=_worker_loop, daemon=True, name="clipper-worker").start()
     threading.Thread(target=_tg_poller_loop, daemon=True, name="clipper-tg").start()

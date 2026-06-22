@@ -16,6 +16,8 @@ import glob
 import os
 import subprocess
 import tempfile
+import threading
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -26,6 +28,9 @@ except Exception:                       # запуск как одиночный
 
 _OCR = None
 _OCR_TRIED = False
+# RapidOCR-инстанс ОДИН на процесс, а рендер идёт в 4 потока → конкурентные вызовы
+# ocr() могут дедлокнуть/висеть. Сериализуем доступ к движку этим локом.
+_OCR_LOCK = threading.Lock()
 
 
 def _get_ocr():
@@ -73,7 +78,8 @@ def detect_brand_regions(
         return []
 
     brands = brand_filter.load_brands(settings)
-    fps = float(settings.get("casino_blur_fps", 2.0) or 2.0)
+    fps = float(settings.get("casino_blur_fps", 1.0) or 1.0)
+    budget_s = float(settings.get("casino_blur_budget_s", 45) or 45)   # жёсткий лимит OCR на клип
     min_conf = float(settings.get("casino_blur_min_conf", 0.45) or 0.45)
     max_regions = int(settings.get("casino_blur_max_regions", 12) or 12)
     pad_s = float(settings.get("casino_blur_pad_s", 0.4) or 0.4)
@@ -94,10 +100,16 @@ def detect_brand_regions(
         if p.returncode != 0:
             return []
         frames = sorted(glob.glob(str(work / "f_*.png")))
+        t_start = time.time()
         for idx, fp in enumerate(frames):
+            if time.time() - t_start > budget_s:   # жёсткий лимит OCR на клип — НЕ вешаемся
+                print(f"[casino] лимит OCR ({budget_s:.0f}с) на кадре {idx}/{len(frames)} — стоп",
+                      flush=True)
+                break
             t = idx / fps                          # время кадра, clip-relative
             try:
-                res, _ = ocr(fp)
+                with _OCR_LOCK:                    # один движок на процесс → сериализуем потоки
+                    res, _ = ocr(fp)
             except Exception:
                 continue
             for item in (res or []):
