@@ -124,26 +124,53 @@ def _safe_name(title: str, vid: str) -> str:
 
 
 # ── ffmpeg (для склейки раздельных дорожек invidious/piped) ─────────────────
+def _system_ffmpeg() -> Optional[str]:
+    """Путь к СИСТЕМНОМУ ffmpeg (рядом обычно и ffprobe — нужен yt-dlp)."""
+    import shutil
+    f = shutil.which("ffmpeg")
+    if f:
+        return f
+    for p in ("/usr/bin/ffmpeg", "/usr/local/bin/ffmpeg", "/bin/ffmpeg"):
+        if Path(p).exists():
+            return p
+    return None
+
+
 def _ffmpeg_dir() -> Optional[str]:
-    """Папка с ffmpeg.exe для yt-dlp (бинарь imageio называется иначе → копируем)."""
+    """Папка с ffmpeg для yt-dlp. Сначала СИСТЕМНЫЙ (там же ffprobe), иначе копируем
+    бинарь imageio под ПРАВИЛЬНЫМ для ОС именем: на Linux это 'ffmpeg', НЕ 'ffmpeg.exe'
+    (из-за .exe yt-dlp на сервере не находил ffmpeg и падал на склейке 1080p)."""
+    import os
+    import shutil
+    sys_ff = _system_ffmpeg()
+    if sys_ff:
+        return str(Path(sys_ff).resolve().parent)
     try:
         import imageio_ffmpeg
-        import shutil
         src = Path(imageio_ffmpeg.get_ffmpeg_exe())
         bindir = Path(__file__).resolve().parent / "data" / "bin"
         bindir.mkdir(parents=True, exist_ok=True)
-        dst = bindir / "ffmpeg.exe"
+        dst = bindir / ("ffmpeg.exe" if os.name == "nt" else "ffmpeg")
         if not dst.exists() or dst.stat().st_size != src.stat().st_size:
             shutil.copyfile(src, dst)
+            try:
+                os.chmod(dst, 0o755)   # исполняемый на Linux
+            except Exception:
+                pass
         return str(bindir)
     except Exception:
         return None
 
 
 def _ffmpeg_exe() -> Optional[str]:
+    import os
+    sys_ff = _system_ffmpeg()
+    if sys_ff:
+        return sys_ff
     d = _ffmpeg_dir()
-    if d and (Path(d) / "ffmpeg.exe").exists():
-        return str(Path(d) / "ffmpeg.exe")
+    name = "ffmpeg.exe" if os.name == "nt" else "ffmpeg"
+    if d and (Path(d) / name).exists():
+        return str(Path(d) / name)
     try:
         import imageio_ffmpeg
         return imageio_ffmpeg.get_ffmpeg_exe()
