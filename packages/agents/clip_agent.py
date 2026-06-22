@@ -238,7 +238,7 @@ class ClipAgent(BaseAgent):
                 try:
                     data = llm_client.complete_json(
                         self.llm_provider, self.llm_key, system, user,
-                        max_tokens=2500, temperature=0.4,
+                        max_tokens=4000, temperature=0.4,
                     )
                     raw = data.get("candidates") if isinstance(data, dict) else None
                     if isinstance(raw, list):

@@ -145,6 +145,63 @@ def _post_groq(payload: dict, fallback_key: str = "", timeout: int = 60) -> dict
     raise LLMError(f"groq unreachable after rotation: {last_err}")
 
 
+def _post_gemini(payload: dict, fallback_key: str = "", timeout: int = 90) -> dict:
+    """POST к Gemini с РОТАЦИЕЙ ключей: при 429/503 (лимит/перегрузка) или 401/403
+    (битый ключ) берём следующий ключ из пула и повторяем. Это фикс, из-за которого
+    умный отбор на длинном видео падал в fill — один ключ захлёбывался на серии
+    запросов по кускам транскрипта."""
+    try:
+        from . import gemini_pool
+    except Exception:
+        gemini_pool = None
+    pool_keys = gemini_pool.keys() if gemini_pool else []
+    keys = pool_keys or ([fallback_key] if fallback_key else [])
+    if not keys:
+        raise LLMError("gemini: нет ключа")
+    data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    last_err = ""
+    tries = len(keys) + 2
+    for t in range(tries):
+        key = gemini_pool.current() if (gemini_pool and pool_keys) else keys[t % len(keys)]
+        headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json",
+                   "User-Agent": USER_AGENT}
+        req = urllib.request.Request(GEMINI_URL, data=data, method="POST", headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                res = json.loads(r.read().decode("utf-8"))
+            if not _extract_text(res) and t < tries - 1:        # пустой 200 → следующий ключ
+                last_err = f"empty 200 (ключ …{key[-4:]})"
+                if gemini_pool and pool_keys and gemini_pool.count() > 1:
+                    gemini_pool.rotate()
+                continue
+            return res
+        except urllib.error.HTTPError as e:
+            detail = ""
+            try:
+                detail = e.read().decode("utf-8", errors="replace")[:300]
+            except Exception:
+                pass
+            if e.code in (429, 503, 500, 502, 504, 401, 403):   # лимит/перегрузка/битый ключ → следующий
+                last_err = f"HTTP {e.code} (ключ …{key[-4:]})"
+                if gemini_pool and pool_keys and gemini_pool.count() > 1:
+                    gemini_pool.rotate()
+                print(f"[gemini] HTTP {e.code} — следующий ключ", flush=True)
+                if t >= len(keys) - 1 and e.code in (429, 503):  # обошли все → короткая пауза
+                    time.sleep(4)
+                continue
+            raise LLMError(f"HTTP {e.code}: {detail or e.reason}")
+        except (urllib.error.URLError, TimeoutError, OSError) as e:
+            last_err = str(e)
+            if t < tries - 1:
+                time.sleep(3)
+                continue
+        except ValueError as e:
+            last_err = f"не-JSON ({str(e)[:50]})"
+            if t < tries - 1:
+                continue
+    raise LLMError(f"gemini unreachable after rotation: {last_err}")
+
+
 def complete(
     provider: str,
     api_key: str,
@@ -190,8 +247,7 @@ def complete(
         if provider == "groq":
             res = _post_groq(payload, fallback_key=api_key)   # пул ключей + ротация при 429
         elif provider == "gemini":
-            headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-            res = _post(GEMINI_URL, headers, payload)
+            res = _post_gemini(payload, fallback_key=api_key)   # пул ключей + ротация при 429/503
         else:
             headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
             res = _post(OPENAI_URL, headers, payload)
