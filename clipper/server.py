@@ -347,7 +347,7 @@ def _list_sources() -> Dict[str, List[Dict[str, Any]]]:
     out: Dict[str, List[Dict[str, Any]]] = {}
     st = _load_state()
     queued = {(q["category"], q["file"]) for q in st["queue"]
-              if q["status"] in ("pending", "processing")}
+              if q["status"] in ("pending", "processing") and q.get("file")}
     for key, folder in CAT_FOLDER.items():
         items = []
         d = SOURCES_DIR / folder
@@ -1313,7 +1313,7 @@ def enqueue(body: EnqueueIn):
     added = 0
     with _LOCK:
         queued = {(q["category"], q["file"]) for q in st["queue"]
-                  if q["status"] in ("pending", "processing")}
+                  if q["status"] in ("pending", "processing") and q.get("file")}
         for f in body.files:
             if (body.category, f) in queued:
                 continue
@@ -1733,8 +1733,8 @@ def _startup():
             if q.get("status") == "processing":
                 q["status"] = "pending"
                 q.pop("error", None)
-                if not q.get("downloaded"):
-                    q.pop("file", None)        # частичный файл будет перекачан начисто
+                # «file» НЕ трогаем — иначе падает q["file"] в списке источников/очереди.
+                # Перекачку обеспечивает downloaded: не докачано → воркер скачает заново.
                 print(f"[clipper] осиротевшая задача возвращена в очередь: "
                       f"{str(q.get('url') or q.get('file') or q.get('id'))[:60]}", flush=True)
         _save_state()
