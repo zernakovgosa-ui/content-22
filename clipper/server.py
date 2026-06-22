@@ -288,8 +288,11 @@ def _llm_polish_clips(clips: List[Dict[str, Any]], source_name: str, cat_label: 
     """Один запрос к LLM: цепляющие названия/описания/хештеги для всех клипов
     видео. None при любой ошибке — тогда работает детерминированный фолбэк."""
     prov, key = (None, None)
+    # Groq (Llama) ВПЕРЕДИ Gemini: Gemini-цензор блокирует дерзкий контент бустера
+    # (finish_reason content_filter: PROHIBITED_CONTENT) → отбор/названия валились в
+    # fill. Groq не цензурит. Gemini остаётся запасным (для не-бустер контента).
     for k, p in (("anthropic_api_key", "anthropic"), ("openai_api_key", "openai"),
-                 ("gemini_api_key", "gemini"), ("groq_api_key", "groq")):
+                 ("groq_api_key", "groq"), ("gemini_api_key", "gemini")):
         if settings.get(k):
             prov, key = p, settings[k]
             break
@@ -419,8 +422,11 @@ def _process_video(item: Dict[str, Any]) -> None:
           f"сегментов {len(transcript.get('segments') or [])}) → целюсь в {n_clips} клипов", flush=True)
     dur = true_dur
     prov, key = (None, None)
+    # Groq (Llama) ВПЕРЕДИ Gemini: Gemini-цензор блокирует дерзкий контент бустера
+    # (finish_reason content_filter: PROHIBITED_CONTENT) → отбор/названия валились в
+    # fill. Groq не цензурит. Gemini остаётся запасным (для не-бустер контента).
     for k, p in (("anthropic_api_key", "anthropic"), ("openai_api_key", "openai"),
-                 ("gemini_api_key", "gemini"), ("groq_api_key", "groq")):
+                 ("groq_api_key", "groq"), ("gemini_api_key", "gemini")):
         if settings.get(k):
             prov, key = p, settings[k]
             break
