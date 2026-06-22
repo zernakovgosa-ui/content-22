@@ -175,15 +175,15 @@ def _looks_like_media(dest: Path) -> bool:
 
 
 def _stream(url: str, dest: Path, ua: str, progress_cb=None,
-            timeout: int = DOWNLOAD_TIMEOUT, refresh=None, max_attempts: int = 6) -> bool:
-    """Скачать URL в файл.
+            timeout: int = DOWNLOAD_TIMEOUT, refresh=None, max_attempts: int = 8) -> bool:
+    """Скачать URL в файл с устойчивым РЕЗЮМОМ.
 
-    Резюм по Range (догрузка ХВОСТА) безопасен ТОЛЬКО для стабильного URL,
-    отдающего тот же байт-поток (прямой googlevideo у invidious/piped, refresh=None).
-    cobalt-туннель (refresh задан) генерится ЗАНОВО на каждый POST со своими
-    смещениями — дозапись хвоста туда склеила бы куски РАЗНЫХ потоков и молча
-    била mp4. Поэтому для туннеля при обрыве качаем С НУЛЯ свежим URL, а не
-    дописываем. Неполный/битый файл в итоге отбраковываем и удаляем.
+    Догрузка хвоста (Range) с ТОГО ЖЕ URL байт-консистентна (тот же поток), поэтому
+    большой 1080p-файл докачивается за несколько попыток на рвущемся канале, а не
+    качается вечно с нуля (реальный баг на 3 ГБ ролике). Туннель cobalt пересоздаём
+    (refresh) ТОЛЬКО если текущий URL сдох/застрял 2 раза подряд — и тогда качаем С
+    НУЛЯ (новый туннель = другие смещения, дозапись хвоста туда била бы mp4).
+    Неполный/битый файл в итоге отбраковываем и удаляем.
     """
     def _fail() -> bool:
         if dest.exists():
@@ -198,16 +198,21 @@ def _stream(url: str, dest: Path, ua: str, progress_cb=None,
             dest.unlink()   # стартуем чисто
         except Exception:
             pass
-    resumable = refresh is None
+    cur_url = url
     done = 0
     total = 0
+    same_url_fails = 0
     for attempt in range(1, max_attempts + 1):
-        cur_url = (refresh() if (refresh and attempt > 1) else url) or url
+        # Пересоздаём туннель только после 2 подряд обрывов/застоев на текущем URL —
+        # старые байты несовместимы с новым туннелем, поэтому начинаем с нуля.
+        if refresh and same_url_fails >= 2:
+            new = refresh()
+            if new:
+                cur_url, done, total, same_url_fails = new, 0, 0, 0
         if not cur_url:
             break
-        if not resumable:
-            done = 0                                   # туннель: каждая попытка с нуля
-        use_range = resumable and done > 0
+        prev_done = done
+        use_range = done > 0
         headers = {"Range": f"bytes={done}-"} if use_range else {}
         try:
             with urllib.request.urlopen(_request(cur_url, ua, headers=headers), timeout=timeout) as r:
@@ -215,14 +220,14 @@ def _stream(url: str, dest: Path, ua: str, progress_cb=None,
                 if "text/html" in ctype or "application/json" in ctype:
                     return _fail()                     # прокси отдал страницу/JSON ошибки
                 status = getattr(r, "status", 200) or 200
-                if status == 206 and use_range:        # докачка поддержана (стабильный URL)
+                if status == 206 and use_range:        # докачка поддержана → дописываем хвост
                     m = re.search(r"/(\d+)\s*$", r.headers.get("Content-Range") or "")
                     if m:
                         total = int(m.group(1))
                     mode = "ab"
-                else:                                  # с нуля (туннель или Range проигнорён)
+                else:                                  # Range не поддержан/первый заход → с нуля
                     done = 0
-                    total = int(r.headers.get("Content-Length")           # без стейл-значения
+                    total = int(r.headers.get("Content-Length")
                                 or r.headers.get("Estimated-Content-Length") or 0)
                     mode = "wb"
                 with open(dest, mode) as f:
@@ -237,10 +242,13 @@ def _stream(url: str, dest: Path, ua: str, progress_cb=None,
                                 progress_cb(min(99, int(done * 100 / total)))
                             except Exception:
                                 pass
+            # поток закрылся без исключения: прогресс был → продолжаем тот же URL,
+            # застой (0 байт) → засчитываем как провал URL (после 2 пересоздадим туннель)
+            same_url_fails = 0 if done > prev_done else same_url_fails + 1
         except Exception as e:
             done = dest.stat().st_size if dest.exists() else 0
-            print(f"[downloader] обрыв ({str(e)[:50]}) — "
-                  f"{'догрузка с ' + str(done) + ' б' if resumable else 'перекачаю с нуля'} "
+            same_url_fails += 1
+            print(f"[downloader] обрыв ({str(e)[:50]}) — догрузка с {done} б "
                   f"(попытка {attempt}/{max_attempts})", flush=True)
             continue
         # Поток закончился — полный ли файл?
@@ -250,8 +258,7 @@ def _stream(url: str, dest: Path, ua: str, progress_cb=None,
                     and _looks_like_media(dest)):
                 return True
             return _fail()
-        print(f"[downloader] неполно {done}/{total or '?'} б — "
-              f"{'догружаю' if resumable else 'перекачаю'} "
+        print(f"[downloader] неполно {done}/{total or '?'} б — догружаю "
               f"(попытка {attempt}/{max_attempts})", flush=True)
     if (dest.exists() and dest.stat().st_size >= MIN_OK_BYTES
             and (not total or done >= total * 0.95) and _looks_like_media(dest)):
