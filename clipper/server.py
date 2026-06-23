@@ -45,7 +45,7 @@ CLIPPER_DIR = Path(__file__).resolve().parent
 REPO = CLIPPER_DIR.parent
 sys.path.insert(0, str(REPO))
 
-from fastapi import FastAPI                                   # noqa: E402
+from fastapi import FastAPI, UploadFile, File, Form           # noqa: E402
 from fastapi.responses import (                               # noqa: E402
     FileResponse, HTMLResponse, JSONResponse, RedirectResponse,
 )
@@ -67,6 +67,9 @@ DATA_DIR = CLIPPER_DIR / "data"
 STATE_PATH = DATA_DIR / "state.json"
 SOURCES_DIR = CLIPPER_DIR / "sources"
 OUTPUT_DIR = CLIPPER_DIR / "output" / "jobs"
+MUSIC_DIR = CLIPPER_DIR.parent / "assets" / "music"   # royalty-free фон для клипов
+MUSIC_CATS = ("common", "films", "series", "videos", "buster")
+MUSIC_EXTS = (".mp3", ".m4a", ".aac", ".wav", ".opus", ".ogg")
 SETTINGS_PATH = REPO / "data" / "settings.json"
 
 CATEGORIES = [("videos", "Видосы"), ("films", "Фильмы"), ("series", "Сериалы"),
@@ -1592,6 +1595,65 @@ def download(body: DownloadIn):
                             "music": bool(body.music),
                             "added": datetime.now().isoformat(timespec="seconds")})
         _save_state()
+    return {"ok": True}
+
+
+class MusicDelIn(BaseModel):
+    category: str = "common"
+    name: str
+
+
+@app.get("/music/list")
+def music_list():
+    """Список загруженных royalty-free треков по категориям."""
+    out = {}
+    for cat in MUSIC_CATS:
+        d = MUSIC_DIR if cat == "common" else MUSIC_DIR / cat
+        files = []
+        if d.is_dir():
+            files = sorted(p.name for p in d.iterdir()
+                           if p.is_file() and p.suffix.lower() in MUSIC_EXTS)
+        out[cat] = files
+    return {"music": out}
+
+
+@app.post("/music/upload")
+async def music_upload(file: UploadFile = File(...), category: str = Form("common")):
+    """Загрузить аудио-трек в assets/music/<категория>/ — фон для клипов."""
+    cat = (category or "common").strip()
+    if cat not in MUSIC_CATS:
+        return JSONResponse({"error": "неизвестная категория"}, status_code=400)
+    raw = os.path.basename((file.filename or "").strip())
+    ext = os.path.splitext(raw)[1].lower()
+    if ext not in MUSIC_EXTS:
+        return JSONResponse({"error": "только аудио: mp3/m4a/wav/ogg/opus/aac"}, status_code=400)
+    data = await file.read()
+    if not data:
+        return JSONResponse({"error": "пустой файл"}, status_code=400)
+    if len(data) > 30 * 1024 * 1024:
+        return JSONResponse({"error": "трек больше 30 МБ — возьми покороче"}, status_code=400)
+    dest_dir = MUSIC_DIR if cat == "common" else MUSIC_DIR / cat
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    safe = re.sub(r"[^\w.\-]+", "_", raw)[:80] or ("track" + ext)
+    if not safe.lower().endswith(ext):
+        safe += ext
+    (dest_dir / safe).write_bytes(data)
+    return {"ok": True, "saved": safe, "category": cat}
+
+
+@app.post("/music/delete")
+def music_delete(body: MusicDelIn):
+    """Удалить загруженный трек."""
+    cat = (body.category or "common").strip()
+    if cat not in MUSIC_CATS:
+        return JSONResponse({"error": "неизвестная категория"}, status_code=400)
+    name = os.path.basename(body.name or "")
+    f = (MUSIC_DIR if cat == "common" else MUSIC_DIR / cat) / name
+    try:
+        if f.is_file():
+            f.unlink()
+    except Exception as e:
+        return JSONResponse({"error": str(e)[:120]}, status_code=400)
     return {"ok": True}
 
 

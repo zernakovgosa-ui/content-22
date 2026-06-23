@@ -76,6 +76,22 @@
         названия и описания шортсов получаются по теме. Дальше всё как обычно: одобрение в боте → план.</div>
     </div>
     <div class="card">
+      <h3>🎵 Музыка для клипов (royalty-free)</h3><hr class="goldline"/>
+      <div class="row" style="align-items:center;gap:8px;flex-wrap:wrap">
+        <select id="mus-cat">
+          <option value="common">Общая (все категории)</option>
+          <option value="films">Фильмы</option>
+          <option value="series">Сериалы</option>
+          <option value="videos">Видео</option>
+          <option value="buster">Бустер</option>
+        </select>
+        <input type="file" id="mus-file" accept="audio/*" style="flex:1;min-width:200px"/>
+        <button onclick="uploadMusic()">⬆ Загрузить трек</button>
+      </div>
+      <div class="muted" style="margin-top:6px">Только <b>royalty-free</b> (Pixabay, Mixkit — без копирайта). Подмешивается, только если при скачивании стоит галочка «🎵 с музыкой». Громкость авто-приглушается под голос.</div>
+      <div id="mus-list" style="margin-top:8px">—</div>
+    </div>
+    <div class="card">
       <h3>Клипов на 10 минут</h3><hr class="goldline"/>
       <div class="row" style="align-items:center;gap:10px">
         <input id="cpm" type="number" min="1" max="20" step="1" style="width:90px" value="3"/>
@@ -444,6 +460,32 @@ async function downloadYt(){
   alert('В очереди: скачается в лучшем качестве и нарежется. Клипы прилетят в Telegram.');
   refresh();
 }
+async function uploadMusic(){
+  const fi=$('mus-file'); const f=fi&&fi.files[0]; if(!f) return alert('Выбери аудио-файл (royalty-free!)');
+  const fd=new FormData(); fd.append('file',f); fd.append('category',$('mus-cat').value);
+  const res=await fetch('/music/upload',{method:'POST',body:fd}).then(r=>r.json()).catch(()=>({error:'сеть'}));
+  if(res.error) return alert(res.error);
+  fi.value=''; loadMusic();
+}
+async function loadMusic(){
+  const r=await fetch('/music/list').then(r=>r.json()).catch(()=>null);
+  const box=$('mus-list'); if(!box) return;
+  if(!r||!r.music){ box.textContent='—'; return; }
+  const names={common:'Общая',films:'Фильмы',series:'Сериалы',videos:'Видео',buster:'Бустер'};
+  const html=Object.keys(names).map(cat=>{
+    const files=r.music[cat]||[];
+    if(!files.length) return '';
+    return `<div style="margin:4px 0"><b>${names[cat]}:</b> `+
+      files.map(n=>`${esc(n)} <a href="#" onclick="delMusic('${cat}','${encodeURIComponent(n)}');return false" style="color:#c66;text-decoration:none">✕</a>`).join(' · ')+`</div>`;
+  }).join('');
+  box.innerHTML=html||'<span class="muted">пока пусто — загрузи royalty-free треки (Pixabay/Mixkit)</span>';
+}
+async function delMusic(cat,nameEnc){
+  const name=decodeURIComponent(nameEnc);
+  if(!confirm('Удалить трек '+name+'?')) return;
+  await api('/music/delete',{category:cat,name});
+  loadMusic();
+}
 async function saveStats(cid){
   const vv=parseInt($('v-'+cid).value,10);
   if(isNaN(vv)) return;            // пустое поле — не затираем сохранённые просмотры нулём
@@ -457,7 +499,7 @@ async function savePayout(id){
 }
 async function busterSubmit(cid){ await api('/buster/submit',{clip_id:cid,submitted:true}); refresh(); }
 
-refresh(); setInterval(refresh, 3000);
+refresh(); setInterval(refresh, 3000); loadMusic();
 </script>
 </body>
 </html>
