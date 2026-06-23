@@ -67,14 +67,17 @@ DEFAULT_PIPED = [
 DEFAULT_CHAIN = ["cobalt", "invidious", "piped", "ytdlp"]
 
 
+# Левая граница домена ((?:^|https?://)(?:[\w-]+\.)*?) обязательна — иначе re.search
+# ловит подстроку и тайпсквоты/фишинг (notvk.com/video, evil.com/?u=vk.com/video)
+# проходят как «поддерживаемые» и улетают в yt-dlp с куками.
 RUTUBE_URL_RE = re.compile(
-    r"(https?://)?(www\.)?rutube\.ru/(video|shorts|play/embed|yappy)/", re.I)
+    r"(?:^|https?://)(?:[\w-]+\.)*?rutube\.ru/(?:video|shorts|play/embed|yappy)/", re.I)
 # VK Видео и OK.ru — глобальные сайты (открываются из Польши, не гео-замок как RuTube),
 # огромная библиотека русских фильмов/сериалов/шоу. yt-dlp поддерживает оба нативно.
 VK_URL_RE = re.compile(
-    r"(https?://)?(www\.|m\.)?(vkvideo\.ru|vk\.com|vk\.ru)/(video|clip)", re.I)
+    r"(?:^|https?://)(?:[\w-]+\.)*?(?:vkvideo\.ru|vk\.com|vk\.ru)/(?:video|clip)", re.I)
 OK_URL_RE = re.compile(
-    r"(https?://)?(www\.|m\.)?ok\.ru/(video|live)", re.I)
+    r"(?:^|https?://)(?:[\w-]+\.)*?ok\.ru/(?:video|live)", re.I)
 
 
 def looks_like_youtube(url: str) -> bool:
