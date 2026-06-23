@@ -625,7 +625,11 @@ def _via_ytdlp(url: str, dest_dir: Path, settings: Dict[str, Any],
         if exp > 5:
             sz = path.stat().st_size
             real = _probe_duration(path)
-            if (real and real < exp * 0.8) or sz < exp * 3000:
+            # Размерный порог (~3КБ/с) — эвристика ПОД YOUTUBE (там есть фолбэк-цепочка).
+            # На RuTube бывает легит низкий битрейт И нет фолбэка → размер не проверяем,
+            # полагаемся на длительность (она надёжнее).
+            too_small = looks_like_youtube(url) and sz < exp * 3000
+            if (real and real < exp * 0.8) or too_small:
                 try: path.unlink()
                 except Exception: pass
                 raise RuntimeError(

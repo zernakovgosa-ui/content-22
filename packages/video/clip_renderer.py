@@ -701,6 +701,18 @@ def _build_cta_overlays(workdir: Path) -> Tuple[Optional[Path], Optional[Path]]:
 _MUSIC_EXTS = (".mp3", ".m4a", ".aac", ".wav", ".opus", ".ogg")
 
 
+def _has_audio(ffmpeg: str, path: Path) -> bool:
+    """True, если у файла есть аудиодорожка (ffmpeg -i пишет 'Audio:' в stderr).
+    При сомнении → True (фолбэк рендера прикроет, если дорожки всё же не окажется).
+    Нужно, чтобы не строить музыкальный фильтр (ссылается на [0:a]) для немого видео."""
+    try:
+        p = subprocess.run([ffmpeg, "-i", str(path)],
+                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
+        return b"Audio:" in (p.stderr or b"")
+    except Exception:
+        return True
+
+
 def _pick_bg_music(settings: Dict[str, Any], category: str, seed: str) -> Optional[Path]:
     """Стабильно выбрать фоновый трек для клипа (или None, если выключено/нет файлов).
 
@@ -903,6 +915,9 @@ def render_clips(
         blur_on = False
     # Фоновая музыка: ВЫКЛ по умолчанию (для диалоговых сцен голос важнее музыки).
     music_vol = float(settings.get("bg_music_volume", 0.12) or 0.12)
+    # Аудио источника проверяем ОДИН раз: музыкальный фильтр ссылается на [0:a],
+    # для немого видео это уронило бы рендер (фолбэк бы спас, но двойным прогоном).
+    src_has_audio = _has_audio(ffmpeg, source_path)
 
     def _do_moment(i: int, m: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         try:
@@ -953,8 +968,9 @@ def render_clips(
                   + " — рендерю...", flush=True)
             # Хук-заголовок сверху отключён по решению владельца — лишний текст
             # в кадре не нужен, остаются только караоке-субтитры.
-            music_path = _pick_bg_music(settings, meta.get("category", ""),
-                                        f"{source_path.name}|{i}")
+            music_path = (_pick_bg_music(settings, meta.get("category", ""),
+                                         f"{source_path.name}|{i}")
+                          if src_has_audio else None)
             if not _render_one_clip(ffmpeg, source_path, start, dur, caps, framing, workdir,
                                     out_path, q, hook_title="", cta=cta_on,
                                     blur_regions=blur_regions,
