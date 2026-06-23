@@ -67,6 +67,9 @@
       <div class="row">
         <input id="yt-url" placeholder="youtu.be/… или rutube.ru/video/… (фильмы/сериалы)" style="flex:2;min-width:280px"/>
         <select id="yt-cat"></select>
+        <label style="display:flex;align-items:center;gap:5px;white-space:nowrap"
+               title="Фоновая музыка под клип с авто-приглушением под голос. Треки (royalty-free) кладутся в assets/music/. Для диалоговых фильмов/сериалов лучше без неё.">
+          <input type="checkbox" id="yt-music"/> 🎵 с музыкой</label>
         <button onclick="downloadYt()">⬇ Скачать и нарезать</button>
       </div>
       <div class="muted" style="margin-top:6px">Качает лучшее качество до 1080p, читает описание ролика —
@@ -432,8 +435,9 @@ async function delPlan(id){ await api('/plan/remove',{id}); refresh(); }
 async function cancelJob(id){ if(confirm('Остановить/убрать эту задачу? Недокачанный файл удалится.')){ await api('/queue/cancel',{id}); refresh(); } }
 async function warmAcc(id,warmed){ await api('/accounts/warm',{id,warmed}); refresh(); }
 async function downloadYt(){
-  const url=$('yt-url').value.trim(); if(!url) return alert('Вставь ссылку на YouTube');
-  const r=await api('/download',{url,category:$('yt-cat').value});
+  const url=$('yt-url').value.trim(); if(!url) return alert('Вставь ссылку на YouTube или RuTube');
+  const music=($('yt-music')&&$('yt-music').checked)||false;
+  const r=await api('/download',{url,category:$('yt-cat').value,music});
   if(r.error) return alert(r.error);
   if(!r.ok) return alert('Сервер не принял ссылку — перезапусти CLIPPER.bat и попробуй снова.');
   $('yt-url').value='';

@@ -456,7 +456,10 @@ def _process_video(item: Dict[str, Any]) -> None:
 
     job_id = f"{item['category']}-{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:5]}"
     job_dir = OUTPUT_DIR / job_id
-    res = render_clips(src, moments, transcript, job_dir, settings,
+    # Музыка решается ГАЛОЧКОЙ при скачивании (item["music"]), а не глобально:
+    # отмечена → у клипов этой закачки фон, нет → без музыки.
+    render_settings = {**settings, "bg_music_enabled": bool(item.get("music"))}
+    res = render_clips(src, moments, transcript, job_dir, render_settings,
                        meta={"topic": src.stem, "hashtags": [], "category": item["category"]})
 
     token, chat = _tg_creds()
@@ -1567,6 +1570,7 @@ def buster_submit(body: BusterSubmitIn):
 class DownloadIn(BaseModel):
     url: str
     category: str
+    music: bool = False        # галочка «🎵 с музыкой»: фон у клипов ЭТОЙ закачки
 
 
 @app.post("/download")
@@ -1585,6 +1589,7 @@ def download(body: DownloadIn):
             return JSONResponse({"error": "эта ссылка уже в очереди"}, status_code=400)
         st["queue"].append({"id": uuid.uuid4().hex[:8], "file": "⬇ " + url[:60],
                             "url": url, "category": body.category, "status": "pending",
+                            "music": bool(body.music),
                             "added": datetime.now().isoformat(timespec="seconds")})
         _save_state()
     return {"ok": True}
