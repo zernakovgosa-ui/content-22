@@ -282,20 +282,37 @@ def _clip_text(transcript: Dict[str, Any], start: float, end: float, limit: int 
     return " ".join(parts)[:limit]
 
 
+def _pick_llm_provider(settings: Dict[str, Any]) -> tuple:
+    """Выбрать LLM-провайдера для отбора моментов и названий. Порядок: anthropic →
+    openai → GROQ → gemini (Groq впереди Gemini — тот цензурит контент бустера).
+    Учитывает И одиночный ключ, И СПИСОК (groq_api_keys/gemini_api_keys) — иначе при
+    заполненном только списке провайдер молча пропускался и отбор валился в fill.
+    Реальную ротацию по пулу делают _post_groq/_post_gemini, тут нужен любой 1 ключ."""
+    pairs = (("anthropic", "anthropic_api_key", None),
+             ("openai", "openai_api_key", None),
+             ("groq", "groq_api_key", "groq_api_keys"),
+             ("gemini", "gemini_api_key", "gemini_api_keys"))
+    for prov, single, lst in pairs:
+        key = settings.get(single)
+        key = key.strip() if isinstance(key, str) else key
+        if not key and lst:
+            arr = settings.get(lst) or []
+            if isinstance(arr, str):
+                arr = arr.split(",")
+            arr = [str(x).strip() for x in arr if str(x).strip()]
+            if arr:
+                key = arr[0]
+        if key:
+            return prov, key
+    return None, None
+
+
 def _llm_polish_clips(clips: List[Dict[str, Any]], source_name: str, cat_label: str,
                       settings: Dict[str, Any],
                       src_desc: str = "") -> Optional[List[Dict[str, Any]]]:
     """Один запрос к LLM: цепляющие названия/описания/хештеги для всех клипов
     видео. None при любой ошибке — тогда работает детерминированный фолбэк."""
-    prov, key = (None, None)
-    # Groq (Llama) ВПЕРЕДИ Gemini: Gemini-цензор блокирует дерзкий контент бустера
-    # (finish_reason content_filter: PROHIBITED_CONTENT) → отбор/названия валились в
-    # fill. Groq не цензурит. Gemini остаётся запасным (для не-бустер контента).
-    for k, p in (("anthropic_api_key", "anthropic"), ("openai_api_key", "openai"),
-                 ("groq_api_key", "groq"), ("gemini_api_key", "gemini")):
-        if settings.get(k):
-            prov, key = p, settings[k]
-            break
+    prov, key = _pick_llm_provider(settings)
     if not prov:
         return None
     try:
@@ -421,15 +438,7 @@ def _process_video(item: Dict[str, Any]) -> None:
     print(f"[clipper] {src.name}: файл ~{int(true_dur / 60)} мин (распознано ~{int(tr_dur / 60)} мин, "
           f"сегментов {len(transcript.get('segments') or [])}) → целюсь в {n_clips} клипов", flush=True)
     dur = true_dur
-    prov, key = (None, None)
-    # Groq (Llama) ВПЕРЕДИ Gemini: Gemini-цензор блокирует дерзкий контент бустера
-    # (finish_reason content_filter: PROHIBITED_CONTENT) → отбор/названия валились в
-    # fill. Groq не цензурит. Gemini остаётся запасным (для не-бустер контента).
-    for k, p in (("anthropic_api_key", "anthropic"), ("openai_api_key", "openai"),
-                 ("groq_api_key", "groq"), ("gemini_api_key", "gemini")):
-        if settings.get(k):
-            prov, key = p, settings[k]
-            break
+    prov, key = _pick_llm_provider(settings)
     # Если источник скачан с YouTube — у нас есть его настоящее название.
     topic = (item.get("src_title") or src.stem).strip()
     ctx = AgentContext(topic=topic, format="clip")
@@ -1060,13 +1069,18 @@ def _auto_publish(plan_id: str) -> None:
         if vid is None:
             raise last_err or RuntimeError("upload failed")
         with _LOCK:
-            p["status"] = "posted"
-            p["video_id"] = vid
-            p["marked_at"] = datetime.now().isoformat(timespec="seconds")
-            p.setdefault("posted_at", p["marked_at"])   # неизменный якорь окна выплаты
-            p.pop("attempts", None)
-            p.pop("next_try", None)
-            clip["yt_video_id"] = vid
+            # Перечитываем запись плана: её могли удалить (✕) или подменить во время
+            # заливки. Тогда не теряем уже опубликованный ролик — video_id всё равно
+            # оседает в clip, и _pull_yt_stats/выплаты его увидят.
+            live = next((x for x in _load_state()["plan"] if x.get("id") == plan_id), None)
+            if live is not None:
+                live["status"] = "posted"
+                live["video_id"] = vid
+                live["marked_at"] = datetime.now().isoformat(timespec="seconds")
+                live.setdefault("posted_at", live["marked_at"])   # неизменный якорь окна выплаты
+                live.pop("attempts", None)
+                live.pop("next_try", None)
+            clip["yt_video_id"] = vid   # ВСЕГДА, даже если запись плана удалили во время заливки
             _save_state()
         _notify(f"✅ АВТОПОСТ: «{acc.get('name', '?')}»\n"
                 f"«{(clip.get('title') or '')[:80]}»\nhttps://youtu.be/{vid}")
@@ -1626,9 +1640,13 @@ def queue_cancel(body: RetryIn):
 
 @app.post("/plan/remove")
 def plan_remove(body: RetryIn):
-    """Удалить ОДНУ запись плана (конкретный шортс), остальные не трогаем."""
+    """Удалить ОДНУ запись плана. Кроме статуса 'publishing' — идёт заливка, удаление
+    осиротило бы уже публикуемый ролик (потеря video_id/статистики/выплаты)."""
     with _LOCK:
         st = _load_state()
+        tgt = next((p for p in st["plan"] if p.get("id") == body.id), None)
+        if tgt and tgt.get("status") == "publishing":
+            return {"ok": False, "error": "идёт публикация — нельзя удалить, подожди пару минут"}
         before = len(st["plan"])
         st["plan"] = [p for p in st["plan"] if p.get("id") != body.id]
         _save_state()
