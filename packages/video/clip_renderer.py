@@ -698,11 +698,43 @@ def _build_cta_overlays(workdir: Path) -> Tuple[Optional[Path], Optional[Path]]:
         return None, None
 
 
+_MUSIC_EXTS = (".mp3", ".m4a", ".aac", ".wav", ".opus", ".ogg")
+
+
+def _pick_bg_music(settings: Dict[str, Any], category: str, seed: str) -> Optional[Path]:
+    """Стабильно выбрать фоновый трек для клипа (или None, если выключено/нет файлов).
+
+    Включается флагом settings['bg_music_enabled']. Треки кладём в
+    assets/music/<категория>/ (или общий assets/music/). Один и тот же seed →
+    один и тот же трек (стабильно при пере-рендере).
+    ВАЖНО: только royalty-free — видео фильма уже чужое, популярная песня = Content ID.
+    Для диалоговых сцен (фильмы/сериалы) музыку лучше НЕ включать — голос важнее.
+    """
+    if not settings.get("bg_music_enabled"):
+        return None
+    try:
+        import random as _rnd
+        base = Path(__file__).resolve().parents[2] / "assets" / "music"
+        files: List[Path] = []
+        for d in (base / (category or "_none_"), base):
+            if d.is_dir():
+                files = sorted(p for p in d.iterdir()
+                               if p.is_file() and p.suffix.lower() in _MUSIC_EXTS)
+                if files:
+                    break
+        if not files:
+            return None
+        return _rnd.Random(seed).choice(files)
+    except Exception:
+        return None
+
+
 def _render_one_clip(
     ffmpeg: str, src: Path, start: float, dur: float, caps: List[Dict],
     framing: Dict[str, Any], workdir: Path, out_path: Path,
     q: Dict[str, str], hook_title: str = "", cta: bool = False,
     blur_regions: Optional[List[Dict[str, Any]]] = None,
+    music_path: Optional[Path] = None, music_vol: float = 0.12,
 ) -> bool:
     cw, ch, cx, cy = framing["fill"]
 
@@ -732,6 +764,12 @@ def _render_one_clip(
             cmd += ["-i", str(cta_p)]; p_idx = nin; nin += 1
         if cta_m is not None:
             cmd += ["-i", str(cta_m)]; m_idx = nin; nin += 1
+
+    # Фоновая музыка (если включена и трек есть): бесконечный луп, обрежется по -t.
+    music_idx = None
+    if music_path is not None and music_path.exists():
+        cmd += ["-stream_loop", "-1", "-i", str(music_path)]
+        music_idx = nin; nin += 1
 
     # Качество апскейла: лёгкий денойз ДО scale (на малом кропе почти бесплатен,
     # чтобы lanczos+cas не усиливали зерно), полные chroma-флаги у swscale,
@@ -786,12 +824,26 @@ def _render_one_clip(
         fc += f";{cur}[{m_idx}:v]overlay=0:0:enable='between(t,{m0:.2f},{m1:.2f})'[vmid]"; cur = "[vmid]"
     if cur == "[vbase]":
         fc += ";[vbase]null[vout]"; cur = "[vout]"
-    cmd += ["-filter_complex", fc, "-map", cur, "-map", "0:a?",
+    # Аудио: либо родная дорожка (0:a?), либо родная + фоновая музыка с АВТО-ducking
+    # (sidechaincompress: когда говорят — музыка проседает, в паузах поднимается,
+    # поэтому голос/диалог всегда слышно). normalize=0 — голос не теряет громкость.
+    a_map = ["-map", "0:a?"]
+    if music_idx is not None:
+        vol = max(0.0, min(1.0, music_vol))
+        # Обе дорожки приводим к 44100/stereo — иначе sidechaincompress/amix падают
+        # на разной частоте/каналах (источник бывает моно/48к, музыка — стерео/44к).
+        fc += (f";[0:a]aresample=44100,aformat=channel_layouts=stereo,asplit=2[asc][amx]"
+               f";[{music_idx}:a]aresample=44100,aformat=channel_layouts=stereo,"
+               f"volume={vol:.3f}[mraw]"
+               f";[mraw][asc]sidechaincompress=threshold=0.03:ratio=8:attack=20:release=350[mduck]"
+               f";[amx][mduck]amix=inputs=2:duration=first:normalize=0[aout]")
+        a_map = ["-map", "[aout]"]
+    cmd += ["-filter_complex", fc, "-map", cur] + a_map + [
             "-c:v", "libx264", "-pix_fmt", "yuv420p"] + enc_args + [
             "-c:a", "aac", "-b:a", q["abitrate"], "-t", f"{dur:.3f}",
             "-movflags", "+faststart", str(out_path)]
     ok, err = _run(cmd, timeout=1800)
-    if (not ok or not out_path.exists()) and (track is not None or cta):
+    if (not ok or not out_path.exists()) and (track is not None or cta or music_idx is not None):
         # Аварийный путь: если лента субтитров или CTA-плашки не понравились ffmpeg —
         # рендерим голый клип без них, клип важнее.
         print("[clip] overlay failed, rendering bare clip:", err[:200])
@@ -849,6 +901,8 @@ def render_clips(
         blur_on = (meta.get("category") == "buster") and _bf.filter_enabled(settings)
     except Exception:
         blur_on = False
+    # Фоновая музыка: ВЫКЛ по умолчанию (для диалоговых сцен голос важнее музыки).
+    music_vol = float(settings.get("bg_music_volume", 0.12) or 0.12)
 
     def _do_moment(i: int, m: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         try:
@@ -899,9 +953,12 @@ def render_clips(
                   + " — рендерю...", flush=True)
             # Хук-заголовок сверху отключён по решению владельца — лишний текст
             # в кадре не нужен, остаются только караоке-субтитры.
+            music_path = _pick_bg_music(settings, meta.get("category", ""),
+                                        f"{source_path.name}|{i}")
             if not _render_one_clip(ffmpeg, source_path, start, dur, caps, framing, workdir,
                                     out_path, q, hook_title="", cta=cta_on,
-                                    blur_regions=blur_regions):
+                                    blur_regions=blur_regions,
+                                    music_path=music_path, music_vol=music_vol):
                 return None
             if not _verify(ffmpeg, out_path):
                 print(f"[clip] clip {i} failed decode verification; skipping")
