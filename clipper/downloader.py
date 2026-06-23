@@ -596,6 +596,10 @@ def _via_ytdlp(url: str, dest_dir: Path, settings: Dict[str, Any],
     if ffdir:
         opts["ffmpeg_location"] = ffdir
     proxy = (settings.get("ytdlp_proxy") or settings.get("https_proxy") or "").strip()
+    # РФ-прокси ТОЛЬКО для rutube (его лицензионное видео гео-locked на РФ/СНГ). YouTube
+    # остаётся прямым/быстрым — для него прокси из РФ только замедлит.
+    if looks_like_rutube(url) and (settings.get("rutube_proxy") or "").strip():
+        proxy = settings["rutube_proxy"].strip()
     if proxy:
         opts["proxy"] = proxy
     # cookies для ВОЗРАСТНЫХ/закрытых роликов: YouTube не отдаёт 18+ без логина
@@ -691,6 +695,16 @@ def download_youtube(url: str, dest_dir: str | Path, progress_cb=None,
             print(f"[clipper] метод {method} упал: {msg[:120]}", flush=True)
             continue
 
+    if looks_like_rutube(url):
+        raise RuntimeError(
+            "RuTube: не удалось скачать это видео"
+            + (f" ({last_ytdlp_err})" if last_ytdlp_err else "") + ". "
+            "Частая причина — ГЕО-ОГРАНИЧЕНИЕ: лицензионное видео RuTube отдаёт только в "
+            "РФ/СНГ (options 403/404), а наш сервер вне РФ. Это НЕ про твой VPN — качает "
+            "сервер. Варианты: 1) возьми другое rutube-видео (без гео-замка качаются нормально); "
+            "2) пропиши РФ-прокси: \"rutube_proxy\" в data/settings.json (только для rutube, "
+            "YouTube останется прямой) и перезапусти; 3) проверь, что ссылка открывается "
+            "(видео может быть приватным/удалённым).")
     raise RuntimeError(
         "Не удалось скачать ни одним способом (резолверы недоступны/залимичены, "
         "а прямой YouTube душит РФ-DPI" + (f": {last_ytdlp_err}" if last_ytdlp_err else "") + "). "
