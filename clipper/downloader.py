@@ -517,6 +517,13 @@ def _via_piped(url: str, dest_dir: Path, settings: Dict[str, Any],
 def _via_ytdlp(url: str, dest_dir: Path, settings: Dict[str, Any],
                progress_cb=None) -> Dict[str, Any]:
     import yt_dlp
+    import os
+    # Deno (JS-рантайм для решения n-challenge/nsig) лежит в /usr/local/bin. Гарантируем,
+    # что yt-dlp его найдёт, даже если PATH у systemd-сервиса узкий — иначе nsig не
+    # решается, ссылки на форматы не расшифровываются и ловим «format not available».
+    for _d in ("/usr/local/bin", "/root/.deno/bin"):
+        if os.path.isdir(_d) and _d not in os.environ.get("PATH", "").split(os.pathsep):
+            os.environ["PATH"] = _d + os.pathsep + os.environ.get("PATH", "")
 
     def _hook(d):
         if progress_cb and d.get("status") == "downloading":
@@ -539,11 +546,13 @@ def _via_ytdlp(url: str, dest_dir: Path, settings: Dict[str, Any],
         "fragment_retries": 10,
         "socket_timeout": 60,
         "source_address": "0.0.0.0",   # форс IPv4 — лечит повисший IPv6 в РФ-сетях
-        # Несколько player-клиентов: tv_embedded/mediaconnect/android_vr ОБХОДЯТ
-        # возрастной гейт без входа; остальные — обычный фолбэк. yt-dlp сам возьмёт
-        # тот, что отдаёт потоки → возрастные ролики качаются без «нельзя».
-        "extractor_args": {"youtube": {"player_client":
-            ["tv_embedded", "mediaconnect", "android_vr", "web_safari", "android", "web"]}},
+        # web/tv-клиенты с poToken (bgutil :4416) + nsig (Deno) отдают полные форматы
+        # и качают НАПРЯМУЮ быстро — их вперёд. tv_embedded/android_vr оставляем хвостом
+        # как обход возрастного гейта без логина (если cookies протухнут).
+        "extractor_args": {"youtube": {
+            "player_client": ["web_safari", "web", "tv", "mweb", "tv_embedded", "android_vr"],
+            "getpot_bgutil_baseurl": ["http://127.0.0.1:4416"],
+        }},
         "quiet": True,
         "no_warnings": True,
         "progress_hooks": [_hook],

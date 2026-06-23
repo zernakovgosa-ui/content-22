@@ -27,7 +27,7 @@ fi
 echo "==> [2/10] системные пакеты"
 apt-get update -y
 apt-get install -y git curl ca-certificates gnupg python3 python3-venv python3-pip \
-                   ffmpeg libglib2.0-0 nginx apache2-utils
+                   ffmpeg libglib2.0-0 nginx apache2-utils unzip
 
 echo "==> [3/10] docker"
 command -v docker >/dev/null 2>&1 || curl -fsSL https://get.docker.com | sh
@@ -52,7 +52,23 @@ python3 -m venv .venv
 ./.venv/bin/pip install --upgrade pip -q
 ./.venv/bin/pip install -q fastapi==0.115.0 "uvicorn[standard]==0.30.6" pydantic==2.9.2 \
     python-dotenv==1.0.1 "pillow>=11" imageio-ffmpeg opencv-python-headless yt-dlp \
-    rapidocr-onnxruntime   # OCR для блюра названий казино/контор (buster)
+    rapidocr-onnxruntime \
+    bgutil-ytdlp-pot-provider yt-dlp-ejs   # OCR(блюр) + poToken-плагин + nsig-солверы
+
+echo "==> [6b/10] poToken (bgutil docker) + nsig (Deno) — yt-dlp качает YouTube НАПРЯМУЮ"
+# bgutil: HTTP-сервер генерит poToken (botguard) для yt-dlp на :4416
+docker rm -f bgutil-provider >/dev/null 2>&1 || true
+docker run -d --name bgutil-provider --restart unless-stopped -p 4416:4416 \
+    brainicism/bgutil-ytdlp-pot-provider >/dev/null 2>&1 \
+    || echo "  !! bgutil docker не поднялся — yt-dlp может не брать защищённые ролики"
+# Deno: JS-рантайм для решения n-challenge (nsig). Без него ссылки на форматы не
+# расшифровываются → yt-dlp ловит «Requested format is not available».
+if [ ! -x /usr/local/bin/deno ]; then
+  curl -fsSL -o /tmp/deno.zip \
+    https://github.com/denoland/deno/releases/latest/download/deno-x86_64-unknown-linux-gnu.zip \
+    && unzip -o /tmp/deno.zip -d /usr/local/bin/ && chmod +x /usr/local/bin/deno \
+    || echo "  !! Deno не установился — nsig не решится, прямой yt-dlp ослабнет"
+fi
 
 echo "==> [7/10] рабочие папки + settings.json"
 mkdir -p "$APP/clipper/data" "$APP/clipper/output/jobs" "$APP/data" \
@@ -63,7 +79,7 @@ import json,sys
 p,ip,key=sys.argv[1],sys.argv[2],sys.argv[3]
 try: d=json.load(open(p,encoding='utf-8'))
 except Exception: d={}
-d["yt_download_chain"]=["cobalt","ytdlp"]
+d["yt_download_chain"]=["ytdlp","cobalt","invidious","piped"]
 d["cobalt_self_host"]=f"http://{ip}:9000"
 if key: d["cobalt_api_key"]=key
 d.setdefault("max_height",1080)
