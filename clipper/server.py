@@ -697,6 +697,15 @@ def _handle_callback(cb: Dict[str, Any], token: str, chat: str) -> None:
                 shutil.copyfile(do_copy[0], dst)
             except Exception:
                 pass
+        if do_copy:                       # клип одобрен → АВТО-сборка плана (без ручной кнопки)
+            try:
+                _build_plan()
+                sched = next((p for p in _load_state()["plan"]
+                              if p.get("clip_id") == clip_id and p.get("status") == "scheduled"), None)
+                if sched:
+                    answer = f"✅ В плане: {sched.get('date')} в {sched.get('slot')}"
+            except Exception as e:
+                print("[clipper] авто-план после одобрения не удался:", repr(e), flush=True)
 
     elif data.startswith("p:done:") or data.startswith("p:skip:"):
         pid = data.split(":", 2)[2]
@@ -1273,7 +1282,7 @@ def _buster_state(st: Dict[str, Any]) -> Dict[str, Any]:
         "currency": cur,
         "accounts": accounts,
         "accounts_count": len(b_accs),
-        "max_accounts": int(s.get("buster_max_accounts", 2) or 2),
+        "max_accounts": int(s.get("buster_max_accounts", 10) or 10),
         "clips": clips,
         "form_url": s.get("buster_payout_form_url") or "",
         "contact": s.get("buster_payout_contact") or "",
@@ -1382,7 +1391,7 @@ def accounts_add(body: AccountIn):
                 return JSONResponse({"error": "Бустер: аккаунт должен быть YouTube — "
                                               "вертикаль работает только с YouTube Shorts"},
                                     status_code=400)
-            limit = int(s.get("buster_max_accounts", 2) or 2)
+            limit = int(s.get("buster_max_accounts", 10) or 10)
             if sum(1 for a in st["accounts"] if a.get("category") == BUSTER_CAT) >= limit:
                 return JSONResponse({"error": f"Бустер: лимит {limit} аккаунта по правилам "
                                               f"программы — больше добавить нельзя"},
@@ -1432,8 +1441,10 @@ def accounts_payout(body: AccountPayoutIn):
     return {"ok": True}
 
 
-@app.post("/plan/build")
-def plan_build():
+def _build_plan() -> tuple:
+    """Собрать расписание для всех одобренных, ещё не запланированных клипов.
+    Возвращает (добавлено, пропущено-непрогретых). Дёргается и кнопкой «Сформировать
+    план», и АВТОМАТИЧЕСКИ после одобрения клипа в Telegram."""
     st = _load_state()
     with _LOCK:
         planned_clips = {p["clip_id"] for p in st["plan"]}
@@ -1468,6 +1479,12 @@ def plan_build():
                 st["plan"].append(e)
                 built += 1
         _save_state()
+    return built, unwarmed
+
+
+@app.post("/plan/build")
+def plan_build():
+    built, unwarmed = _build_plan()
     return {"planned": built, "unwarmed": unwarmed}
 
 

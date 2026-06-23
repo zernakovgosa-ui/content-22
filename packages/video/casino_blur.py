@@ -103,16 +103,18 @@ def detect_brand_regions(
         if p.returncode != 0:
             return []
         frames = sorted(glob.glob(str(work / "f_*.png")))
-        t_start = time.time()
-        for idx, fp in enumerate(frames):
-            if time.time() - t_start > budget_s:   # жёсткий лимит OCR на клип — НЕ вешаемся
+        ocr_time = 0.0                              # считаем ФАКТИЧЕСКОЕ время OCR, а не
+        for idx, fp in enumerate(frames):          # ожидание лока (иначе параллельные клипы
+            if ocr_time > budget_s:                # прожигали бюджет в очереди за движком)
                 print(f"[casino] лимит OCR ({budget_s:.0f}с) на кадре {idx}/{len(frames)} — стоп",
                       flush=True)
                 break
             t = idx / fps                          # время кадра, clip-relative
             try:
                 with _OCR_LOCK:                    # один движок на процесс → сериализуем потоки
+                    _t0 = time.time()
                     res, _ = ocr(fp)
+                    ocr_time += time.time() - _t0
             except Exception:
                 continue
             for item in (res or []):

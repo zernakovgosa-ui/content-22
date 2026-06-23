@@ -183,9 +183,13 @@ def _merge_av(video: Path, audio: Path, out: Path) -> bool:
     ff = _ffmpeg_exe()
     if not ff:
         return False
-    p = subprocess.run([ff, "-y", "-i", str(video), "-i", str(audio),
-                        "-c", "copy", "-movflags", "+faststart", str(out)],
-                       stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        p = subprocess.run([ff, "-y", "-i", str(video), "-i", str(audio),
+                            "-c", "copy", "-movflags", "+faststart", str(out)],
+                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=900)
+    except Exception as e:
+        print(f"[downloader] склейка не удалась/таймаут: {str(e)[:80]}", flush=True)
+        return False
     return p.returncode == 0 and out.exists() and out.stat().st_size > MIN_OK_BYTES
 
 

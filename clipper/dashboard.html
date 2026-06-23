@@ -180,7 +180,7 @@
 <script>
 let S = null;
 const $ = id => document.getElementById(id);
-const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const esc = s => String(s ?? '').replace(/[&<>"'`]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;','`':'&#96;'}[c]));
 const CLS = {pending:'',processing:'warn',done:'ok',failed:'err',review:'warn',approved:'ok',
              rejected:'err',scheduled:'',notified:'warn',publishing:'warn',posted:'ok',skipped:''};
 const RU  = {pending:'в очереди',processing:'режется',done:'готово',failed:'ошибка',
