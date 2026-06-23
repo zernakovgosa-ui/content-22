@@ -629,7 +629,10 @@ def _via_ytdlp(url: str, dest_dir: Path, settings: Dict[str, Any],
             # На RuTube бывает легит низкий битрейт И нет фолбэка → размер не проверяем,
             # полагаемся на длительность (она надёжнее).
             too_small = looks_like_youtube(url) and sz < exp * 3000
-            if (real and real < exp * 0.8) or too_small:
+            # Если ffprobe не смог прочитать длительность (real=0) И файл крошечный —
+            # это точно битый/обрезанный (страхует RuTube, где size-порог выключен).
+            probe_failed_tiny = (not real) and sz < MIN_OK_BYTES
+            if (real and real < exp * 0.8) or too_small or probe_failed_tiny:
                 try: path.unlink()
                 except Exception: pass
                 raise RuntimeError(

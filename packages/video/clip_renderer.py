@@ -889,7 +889,7 @@ def _render_one_clip(
                f";[{music_idx}:a]aresample=44100,aformat=channel_layouts=stereo,"
                f"volume={vol:.3f}[mraw]"
                f";[mraw][asc]sidechaincompress=threshold=0.03:ratio=8:attack=20:release=350[mduck]"
-               f";[amx][mduck]amix=inputs=2:duration=first:normalize=0[aout]")
+               f";[amx][mduck]amix=inputs=2:duration=longest:normalize=0[aout]")
         a_map = ["-map", "[aout]"]
     cmd += ["-filter_complex", fc, "-map", cur] + a_map + [
             "-c:v", "libx264", "-pix_fmt", "yuv420p"] + enc_args + [
