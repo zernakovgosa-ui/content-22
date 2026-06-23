@@ -885,10 +885,15 @@ def _render_one_clip(
         vol = max(0.0, min(1.0, music_vol))
         # Обе дорожки приводим к 44100/stereo — иначе sidechaincompress/amix падают
         # на разной частоте/каналах (источник бывает моно/48к, музыка — стерео/44к).
+        # apad на voice-сайдчейне: дополняем голос тишиной «до бесконечности», иначе
+        # sidechaincompress (а с ним и музыка) обрывается на EOF голоса → немой хвост,
+        # когда аудио источника короче окна клипа. amix=longest + выходной -t дотягивают
+        # музыку ровно до конца клипа.
         fc += (f";[0:a]aresample=44100,aformat=channel_layouts=stereo,asplit=2[asc][amx]"
+               f";[asc]apad[ascp]"
                f";[{music_idx}:a]aresample=44100,aformat=channel_layouts=stereo,"
                f"volume={vol:.3f}[mraw]"
-               f";[mraw][asc]sidechaincompress=threshold=0.03:ratio=8:attack=20:release=350[mduck]"
+               f";[mraw][ascp]sidechaincompress=threshold=0.03:ratio=8:attack=20:release=350[mduck]"
                f";[amx][mduck]amix=inputs=2:duration=longest:normalize=0[aout]")
         a_map = ["-map", "[aout]"]
     cmd += ["-filter_complex", fc, "-map", cur] + a_map + [
