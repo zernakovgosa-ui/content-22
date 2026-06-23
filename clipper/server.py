@@ -1571,13 +1571,13 @@ class DownloadIn(BaseModel):
 
 @app.post("/download")
 def download(body: DownloadIn):
-    """Ссылка на YouTube → очередь: скачать (лучшее ≤1080p) и нарезать."""
-    from clipper.downloader import looks_like_youtube
+    """Ссылка на YouTube или RuTube → очередь: скачать (лучшее ≤1080p) и нарезать."""
+    from clipper.downloader import looks_like_supported
     url = body.url.strip()
     if body.category not in CAT_FOLDER:
         return JSONResponse({"error": "unknown category"}, status_code=400)
-    if not looks_like_youtube(url):
-        return JSONResponse({"error": "это не похоже на ссылку YouTube"}, status_code=400)
+    if not looks_like_supported(url):
+        return JSONResponse({"error": "это не похоже на ссылку YouTube или RuTube"}, status_code=400)
     st = _load_state()
     with _LOCK:
         if any(q.get("url") == url and q["status"] in ("pending", "processing")

@@ -67,8 +67,22 @@ DEFAULT_PIPED = [
 DEFAULT_CHAIN = ["cobalt", "invidious", "piped", "ytdlp"]
 
 
+RUTUBE_URL_RE = re.compile(
+    r"(https?://)?(www\.)?rutube\.ru/(video|shorts|play/embed|yappy)/", re.I)
+
+
 def looks_like_youtube(url: str) -> bool:
     return bool(YT_URL_RE.search((url or "").strip()))
+
+
+def looks_like_rutube(url: str) -> bool:
+    return bool(RUTUBE_URL_RE.search((url or "").strip()))
+
+
+def looks_like_supported(url: str) -> bool:
+    """YouTube ИЛИ RuTube — источники, которые наш сервер умеет качать (через yt-dlp).
+    RuTube берём напрямую yt-dlp (там нет лицензий → много фильмов/сериалов с озвучкой)."""
+    return looks_like_youtube(url) or looks_like_rutube(url)
 
 
 def _video_id(url: str) -> Optional[str]:
@@ -641,6 +655,10 @@ def download_youtube(url: str, dest_dir: str | Path, progress_cb=None,
     dest_dir = Path(dest_dir)
     dest_dir.mkdir(parents=True, exist_ok=True)
     chain = settings.get("yt_download_chain") or DEFAULT_CHAIN
+    # RuTube и любой не-YouTube умеет ТОЛЬКО yt-dlp напрямую: cobalt/invidious/piped —
+    # это ютубовские резолверы, на rutube они бесполезны (только время потратят).
+    if not looks_like_youtube(url):
+        chain = ["ytdlp"]
     last_ytdlp_err = ""
 
     for method in chain:
