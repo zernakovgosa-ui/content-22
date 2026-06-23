@@ -69,6 +69,12 @@ DEFAULT_CHAIN = ["cobalt", "invidious", "piped", "ytdlp"]
 
 RUTUBE_URL_RE = re.compile(
     r"(https?://)?(www\.)?rutube\.ru/(video|shorts|play/embed|yappy)/", re.I)
+# VK Видео и OK.ru — глобальные сайты (открываются из Польши, не гео-замок как RuTube),
+# огромная библиотека русских фильмов/сериалов/шоу. yt-dlp поддерживает оба нативно.
+VK_URL_RE = re.compile(
+    r"(https?://)?(www\.|m\.)?(vkvideo\.ru|vk\.com|vk\.ru)/(video|clip)", re.I)
+OK_URL_RE = re.compile(
+    r"(https?://)?(www\.|m\.)?ok\.ru/(video|live)", re.I)
 
 
 def looks_like_youtube(url: str) -> bool:
@@ -79,10 +85,19 @@ def looks_like_rutube(url: str) -> bool:
     return bool(RUTUBE_URL_RE.search((url or "").strip()))
 
 
+def looks_like_vk(url: str) -> bool:
+    return bool(VK_URL_RE.search((url or "").strip()))
+
+
+def looks_like_ok(url: str) -> bool:
+    return bool(OK_URL_RE.search((url or "").strip()))
+
+
 def looks_like_supported(url: str) -> bool:
-    """YouTube ИЛИ RuTube — источники, которые наш сервер умеет качать (через yt-dlp).
-    RuTube берём напрямую yt-dlp (там нет лицензий → много фильмов/сериалов с озвучкой)."""
-    return looks_like_youtube(url) or looks_like_rutube(url)
+    """YouTube / RuTube / VK Видео / OK.ru — источники, которые сервер умеет качать
+    (всё через yt-dlp). VK и OK глобальные → фильмы/сериалы тянутся даже из-за рубежа."""
+    return (looks_like_youtube(url) or looks_like_rutube(url)
+            or looks_like_vk(url) or looks_like_ok(url))
 
 
 def _video_id(url: str) -> Optional[str]:
@@ -695,16 +710,18 @@ def download_youtube(url: str, dest_dir: str | Path, progress_cb=None,
             print(f"[clipper] метод {method} упал: {msg[:120]}", flush=True)
             continue
 
-    if looks_like_rutube(url):
+    if not looks_like_youtube(url):
+        src = ("RuTube" if looks_like_rutube(url) else
+               "VK Видео" if looks_like_vk(url) else
+               "OK.ru" if looks_like_ok(url) else "Это видео")
         raise RuntimeError(
-            "RuTube: не удалось скачать это видео"
+            f"{src}: не удалось скачать"
             + (f" ({last_ytdlp_err})" if last_ytdlp_err else "") + ". "
-            "Частая причина — ГЕО-ОГРАНИЧЕНИЕ: лицензионное видео RuTube отдаёт только в "
-            "РФ/СНГ (options 403/404), а наш сервер вне РФ. Это НЕ про твой VPN — качает "
-            "сервер. Варианты: 1) возьми другое rutube-видео (без гео-замка качаются нормально); "
-            "2) пропиши РФ-прокси: \"rutube_proxy\" в data/settings.json (только для rutube, "
-            "YouTube останется прямой) и перезапусти; 3) проверь, что ссылка открывается "
-            "(видео может быть приватным/удалённым).")
+            "Возможные причины: ГЕО-ОГРАНИЧЕНИЕ (лицензионное видео отдаётся только в РФ/СНГ, "
+            "а сервер вне РФ — это НЕ про твой VPN, качает сервер), приватное или удалённое. "
+            "Варианты: 1) возьми другую ссылку (VK/OK/RuTube — без гео-замка качаются нормально); "
+            "2) для гео-locked RuTube — пропиши \"rutube_proxy\" (резидентный РФ-прокси) в "
+            "data/settings.json и перезапусти; 3) проверь, что ссылка реально открывается.")
     raise RuntimeError(
         "Не удалось скачать ни одним способом (резолверы недоступны/залимичены, "
         "а прямой YouTube душит РФ-DPI" + (f": {last_ytdlp_err}" if last_ytdlp_err else "") + "). "

@@ -1588,7 +1588,7 @@ def download(body: DownloadIn):
     if body.category not in CAT_FOLDER:
         return JSONResponse({"error": "unknown category"}, status_code=400)
     if not looks_like_supported(url):
-        return JSONResponse({"error": "это не похоже на ссылку YouTube или RuTube"}, status_code=400)
+        return JSONResponse({"error": "ссылка не распознана — нужна YouTube / RuTube / VK Видео / OK.ru"}, status_code=400)
     st = _load_state()
     with _LOCK:
         if any(q.get("url") == url and q["status"] in ("pending", "processing")
