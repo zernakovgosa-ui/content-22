@@ -514,6 +514,26 @@ def _via_piped(url: str, dest_dir: Path, settings: Dict[str, Any],
 
 
 # ── Метод 4: yt-dlp напрямую (последний — нужен VPN/прокси в РФ) ─────────────
+def _probe_duration(path: Path) -> float:
+    """Реальная длительность файла (сек) через ffprobe; 0.0 если не удалось определить."""
+    import shutil as _sh
+    ff = _sh.which("ffprobe")
+    if not ff:
+        d = _ffmpeg_dir()
+        if d:
+            cand = Path(d) / "ffprobe"
+            ff = str(cand) if cand.exists() else None
+    if not ff:
+        return 0.0
+    try:
+        out = subprocess.run([ff, "-v", "error", "-show_entries", "format=duration",
+                              "-of", "default=nw=1:nk=1", str(path)],
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
+        return float((out.stdout or b"").decode("utf-8", "replace").strip() or 0.0)
+    except Exception:
+        return 0.0
+
+
 def _via_ytdlp(url: str, dest_dir: Path, settings: Dict[str, Any],
                progress_cb=None) -> Dict[str, Any]:
     import yt_dlp
@@ -546,11 +566,12 @@ def _via_ytdlp(url: str, dest_dir: Path, settings: Dict[str, Any],
         "fragment_retries": 10,
         "socket_timeout": 60,
         "source_address": "0.0.0.0",   # форс IPv4 — лечит повисший IPv6 в РФ-сетях
-        # web/tv-клиенты с poToken (bgutil :4416) + nsig (Deno) отдают полные форматы
-        # и качают НАПРЯМУЮ быстро — их вперёд. tv_embedded/android_vr оставляем хвостом
-        # как обход возрастного гейта без логина (если cookies протухнут).
+        # web-клиенты с poToken (bgutil :4416) + nsig (Deno) + cookies отдают ЧИСТЫЕ
+        # форматы (отдельные video+audio с реальными URL) → качаем НАПРЯМУЮ быстро.
+        # tv_embedded/android_vr УБРАНЫ: тянули битые SABR-форматы (фрагменты по 503 →
+        # на выходе обрезок 800КБ). Возрастной гейт держим через cookies (мы залогинены).
         "extractor_args": {"youtube": {
-            "player_client": ["web_safari", "web", "tv", "mweb", "tv_embedded", "android_vr"],
+            "player_client": ["web_safari", "web", "tv", "mweb"],
             "getpot_bgutil_baseurl": ["http://127.0.0.1:4416"],
         }},
         "quiet": True,
@@ -583,6 +604,19 @@ def _via_ytdlp(url: str, dest_dir: Path, settings: Dict[str, Any],
             path = cand if cand.exists() else path
         if not path.exists():
             raise RuntimeError("файл после загрузки не найден")
+        # Защита от ОБРЕЗКА: YouTube иногда отдаёт битый SABR-формат (фрагменты по 503),
+        # и yt-dlp пишет крошечный файл, считая успехом. Сверяем реальную длительность и
+        # размер с ожидаемой → если обрезок, бросаем (оркестратор уйдёт на cobalt).
+        exp = float(info.get("duration") or 0)
+        if exp > 5:
+            sz = path.stat().st_size
+            real = _probe_duration(path)
+            if (real and real < exp * 0.8) or sz < exp * 3000:
+                try: path.unlink()
+                except Exception: pass
+                raise RuntimeError(
+                    f"обрезанный файл (длит {real:.0f}/{exp:.0f}с, {sz // 1024}КБ) — "
+                    f"битый формат, пробую другой метод")
         return {"path": str(path), "file": path.name,
                 "title": (info.get("title") or "").strip(),
                 "description": (info.get("description") or "").strip()[:2000],
