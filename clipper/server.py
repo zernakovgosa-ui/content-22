@@ -213,7 +213,11 @@ def _polish_meta(clip: Dict[str, Any]) -> Dict[str, Any]:
     заголовок из хука, добавляем дефолтные хештеги категории.
     """
     tags = clip.get("tags") or DEFAULT_TAGS.get(clip.get("category", ""), ["#shorts"])
-    tags = [t if t.startswith("#") else f"#{t}" for t in tags][:6]
+    tags = [t if t.startswith("#") else f"#{t}" for t in tags]
+    # #БУСТЕРРОФЛС/#BUSTERROFLS (имя стримера — LLM добавлял сам) убираем ВООБЩЕ.
+    # На #buster для выплат это НЕ влияет (он добавляется отдельно ниже).
+    tags = [t for t in tags
+            if "бустеррофл" not in t.lower() and "busterrofl" not in t.lower()][:6]
 
     title = (clip.get("yt_title") or clip.get("title") or "").strip()
     hook = (clip.get("hook") or "").strip()
@@ -335,7 +339,8 @@ def _llm_polish_clips(clips: List[Dict[str, Any]], source_name: str, cat_label: 
             "Примеры сильных: «поставил всё на один бросок», «не ожидал такого в чате», "
             "«этот момент порвал стрим».\n"
             "Для каждого клипа: title, description (1-2 живых предложения), "
-            "hashtags (4-6, первым #shorts). Отвечай ТОЛЬКО валидным JSON.")
+            "hashtags (4-6, первым #shorts; ПО ТЕМЕ клипа, НЕ имя стримера/канала). "
+            "Отвечай ТОЛЬКО валидным JSON.")
         desc_block = f"\nОписание исходного ролика (используй как контекст):\n{src_desc[:700]}\n" \
             if src_desc else ""
         user = (f"Источник: {source_name} (категория: {cat_label}).{desc_block} "
