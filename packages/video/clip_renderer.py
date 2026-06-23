@@ -713,7 +713,41 @@ def _has_audio(ffmpeg: str, path: Path) -> bool:
         return True
 
 
-def _pick_bg_music(settings: Dict[str, Any], category: str, seed: str) -> Optional[Path]:
+# Настроение клипа → по ключевым словам (БЕЗ ИИ, без трат токенов). Подбираем трек
+# с подходящим тегом в ИМЕНИ файла; если таких нет — случайный.
+_MOOD_KEYWORDS = {
+    "sad":     ["груст", "слёз", "слез", "плач", "прощ", "умер", "смерт", "расстал",
+                "больно", "одинок", "sad", "cry", "death", "goodbye", "tear", "lonely"],
+    "tension": ["напряж", "страх", "опас", "погон", "угроз", "шок", "паник",
+                "tension", "fear", "danger", "chase", "threat", "panic", "suspense"],
+    "epic":    ["эпич", "битв", "побед", "сраж", "мощ", "геро", "эпик",
+                "epic", "battle", "victory", "war", "hero", "triumph"],
+    "action":  ["удар", "экшн", "драк", "погоня", "гонк", "action", "fight", "race", "fast"],
+    "drama":   ["драм", "ссор", "конфликт", "предат", "измен", "drama", "argue", "betray"],
+}
+_MOOD_TRACK_TAGS = {
+    "sad":     ["sad", "emotion", "piano", "груст", "меланхол", "melanchol", "sentimental"],
+    "tension": ["tension", "suspense", "susp", "напряж", "thriller", "dark"],
+    "epic":    ["epic", "cinematic", "trailer", "эпик", "эпич", "heroic", "orchestr"],
+    "action":  ["phonk", "action", "drift", "aggress", "экшн", "drive", "energetic"],
+    "drama":   ["drama", "dramatic", "драм", "emotional"],
+}
+
+
+def _clip_mood(text: str) -> str:
+    """Грубо определить настроение клипа по тексту (название/причина/хук). Дёшево —
+    одни ключевые слова, без обращения к ИИ. Пусто, если не уверены."""
+    t = (text or "").lower()
+    best, n = "", 0
+    for mood, kws in _MOOD_KEYWORDS.items():
+        c = sum(1 for k in kws if k in t)
+        if c > n:
+            n, best = c, mood
+    return best
+
+
+def _pick_bg_music(settings: Dict[str, Any], category: str, seed: str,
+                   mood: str = "") -> Optional[Path]:
     """Стабильно выбрать фоновый трек для клипа (или None, если выключено/нет файлов).
 
     Включается флагом settings['bg_music_enabled']. Треки кладём в
@@ -736,6 +770,13 @@ def _pick_bg_music(settings: Dict[str, Any], category: str, seed: str) -> Option
                     break
         if not files:
             return None
+        # умный подбор по настроению: если есть треки с тегом настроения в имени —
+        # берём из них; иначе случайный из всех (стабильно по seed).
+        tags = _MOOD_TRACK_TAGS.get(mood or "", [])
+        if tags:
+            matched = [f for f in files if any(tag in f.name.lower() for tag in tags)]
+            if matched:
+                files = matched
         return _rnd.Random(seed).choice(files)
     except Exception:
         return None
@@ -968,8 +1009,9 @@ def render_clips(
                   + " — рендерю...", flush=True)
             # Хук-заголовок сверху отключён по решению владельца — лишний текст
             # в кадре не нужен, остаются только караоке-субтитры.
+            mood = _clip_mood(f"{m.get('title','')} {m.get('reason','')} {m.get('hook','')}")
             music_path = (_pick_bg_music(settings, meta.get("category", ""),
-                                         f"{source_path.name}|{i}")
+                                         f"{source_path.name}|{i}", mood=mood)
                           if src_has_audio else None)
             if not _render_one_clip(ffmpeg, source_path, start, dur, caps, framing, workdir,
                                     out_path, q, hook_title="", cta=cta_on,

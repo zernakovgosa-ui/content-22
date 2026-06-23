@@ -88,7 +88,14 @@
         <input type="file" id="mus-file" accept="audio/*" style="flex:1;min-width:200px"/>
         <button onclick="uploadMusic()">⬆ Загрузить трек</button>
       </div>
-      <div class="muted" style="margin-top:6px">Только <b>royalty-free</b> (Pixabay, Mixkit — без копирайта). Подмешивается, только если при скачивании стоит галочка «🎵 с музыкой». Громкость авто-приглушается под голос.</div>
+      <div class="row" style="align-items:center;gap:8px;margin-top:8px">
+        <span>🔊 Громкость:</span>
+        <input type="range" id="mus-vol" min="0" max="0.5" step="0.02" value="0.12"
+               style="flex:1;max-width:260px" oninput="document.getElementById('mus-vol-n').textContent=Math.round(this.value*100)+'%'"/>
+        <b id="mus-vol-n">12%</b>
+        <button onclick="saveVol()">💾 Сохранить громкость</button>
+      </div>
+      <div class="muted" style="margin-top:6px">Только <b>royalty-free</b> (Pixabay, Mixkit — без копирайта). Подмешивается, только если при скачивании стоит галочка «🎵 с музыкой». Музыка авто-приглушается под голос; трек подбирается по настроению клипа.</div>
       <div id="mus-list" style="margin-top:8px">—</div>
     </div>
     <div class="card">
@@ -471,6 +478,7 @@ async function loadMusic(){
   const r=await fetch('/music/list').then(r=>r.json()).catch(()=>null);
   const box=$('mus-list'); if(!box) return;
   if(!r||!r.music){ box.textContent='—'; return; }
+  if(typeof r.volume==='number'){ const s=$('mus-vol'); if(s){ s.value=r.volume; const n=$('mus-vol-n'); if(n) n.textContent=Math.round(r.volume*100)+'%'; } }
   const names={common:'Общая',films:'Фильмы',series:'Сериалы',videos:'Видео',buster:'Бустер'};
   const html=Object.keys(names).map(cat=>{
     const files=r.music[cat]||[];
@@ -485,6 +493,11 @@ async function delMusic(cat,nameEnc){
   if(!confirm('Удалить трек '+name+'?')) return;
   await api('/music/delete',{category:cat,name});
   loadMusic();
+}
+async function saveVol(){
+  const v=parseFloat($('mus-vol').value);
+  const r=await api('/music/volume',{volume:v});
+  if(r&&r.ok) alert('Громкость сохранена: '+Math.round(v*100)+'% — применится к новым нарезкам.');
 }
 async function saveStats(cid){
   const vv=parseInt($('v-'+cid).value,10);

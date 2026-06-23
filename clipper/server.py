@@ -460,8 +460,12 @@ def _process_video(item: Dict[str, Any]) -> None:
     job_id = f"{item['category']}-{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:5]}"
     job_dir = OUTPUT_DIR / job_id
     # Музыка решается ГАЛОЧКОЙ при скачивании (item["music"]), а не глобально:
-    # отмечена → у клипов этой закачки фон, нет → без музыки.
-    render_settings = {**settings, "bg_music_enabled": bool(item.get("music"))}
+    # отмечена → у клипов этой закачки фон, нет → без музыки. Громкость — из state
+    # (рулится из дашборда), трек подбирается по настроению клипа в рендере.
+    render_settings = {**settings,
+                       "bg_music_enabled": bool(item.get("music")),
+                       "bg_music_volume": float(_load_state().get(
+                           "bg_music_volume", settings.get("bg_music_volume", 0.12)) or 0.12)}
     res = render_clips(src, moments, transcript, job_dir, render_settings,
                        meta={"topic": src.stem, "hashtags": [], "category": item["category"]})
 
@@ -1614,7 +1618,8 @@ def music_list():
             files = sorted(p.name for p in d.iterdir()
                            if p.is_file() and p.suffix.lower() in MUSIC_EXTS)
         out[cat] = files
-    return {"music": out}
+    vol = float(_load_state().get("bg_music_volume", 0.12) or 0.12)
+    return {"music": out, "volume": vol}
 
 
 @app.post("/music/upload")
@@ -1655,6 +1660,20 @@ def music_delete(body: MusicDelIn):
     except Exception as e:
         return JSONResponse({"error": str(e)[:120]}, status_code=400)
     return {"ok": True}
+
+
+class MusicVolIn(BaseModel):
+    volume: float
+
+
+@app.post("/music/volume")
+def music_volume(body: MusicVolIn):
+    """Громкость фоновой музыки (0..1, дефолт 0.12). Хранится в state."""
+    v = max(0.0, min(1.0, float(body.volume)))
+    with _LOCK:
+        _load_state()["bg_music_volume"] = v
+        _save_state()
+    return {"ok": True, "volume": v}
 
 
 class WarmIn(BaseModel):
