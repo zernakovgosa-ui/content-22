@@ -76,6 +76,17 @@
         названия и описания шортсов получаются по теме. Дальше всё как обычно: одобрение в боте → план.</div>
     </div>
     <div class="card">
+      <h3>⬆ Загрузить видео (для 18+ / гео-locked, что не качается ссылкой)</h3><hr class="goldline"/>
+      <div class="row" style="align-items:center;gap:8px;flex-wrap:wrap">
+        <select id="src-cat"></select>
+        <input type="file" id="src-file" accept="video/*" style="flex:1;min-width:200px"/>
+        <label style="display:flex;align-items:center;gap:5px;white-space:nowrap"><input type="checkbox" id="src-music"/> 🎵 музыка</label>
+        <button onclick="uploadSource()">⬆ Загрузить и нарезать</button>
+      </div>
+      <div class="muted" style="margin-top:6px">Качаешь видео у себя на ПК (где 18+/гео открывается) → грузишь сюда → нарежется как обычно. Большой файл грузится с твоей скоростью отдачи — потерпи, не закрывай вкладку.</div>
+      <div id="src-progress" style="margin-top:8px"></div>
+    </div>
+    <div class="card">
       <h3>🎵 Музыка для клипов (royalty-free)</h3><hr class="goldline"/>
       <div class="row" style="align-items:center;gap:8px;flex-wrap:wrap">
         <select id="mus-cat">
@@ -284,6 +295,7 @@ function render(){
   // ВАЖНО: заполняем один раз, иначе авто-обновление каждые 3с сбрасывает выбор на «Видосы».
   if ($('acc-cat').innerHTML === '') $('acc-cat').innerHTML = catOpts;
   if ($('yt-cat').innerHTML === '') $('yt-cat').innerHTML = catOpts;
+  if ($('src-cat') && $('src-cat').innerHTML === '') $('src-cat').innerHTML = catOpts;
   $('accs').innerHTML = (S.accounts||[]).map(a=>{
     let plat;
     if (a.platform === 'youtube') {
@@ -498,6 +510,21 @@ async function saveVol(){
   const v=parseFloat($('mus-vol').value);
   const r=await api('/music/volume',{volume:v});
   if(r&&r.ok) alert('Громкость сохранена: '+Math.round(v*100)+'% — применится к новым нарезкам.');
+}
+function uploadSource(){
+  const fi=$('src-file'); const f=fi&&fi.files[0]; if(!f) return alert('Выбери видео-файл');
+  const fd=new FormData(); fd.append('file',f); fd.append('category',$('src-cat').value);
+  fd.append('music', ($('src-music')&&$('src-music').checked)?'true':'false');
+  const box=$('src-progress'); const xhr=new XMLHttpRequest();
+  xhr.open('POST','/source/upload');
+  xhr.upload.onprogress=e=>{ if(e.lengthComputable){ const p=Math.round(e.loaded/e.total*100);
+    box.innerHTML=`⬆ загрузка: <b>${p}%</b> (${Math.round(e.loaded/1048576)} / ${Math.round(e.total/1048576)} МБ)`; } };
+  xhr.onload=()=>{ let r={}; try{r=JSON.parse(xhr.responseText)}catch(e){};
+    if(r.error){ box.innerHTML='❌ '+r.error; }
+    else { box.innerHTML=`✅ Загружено <b>${esc(r.file||'')}</b> (${r.size_mb} МБ) → в очереди на нарезку`; fi.value=''; refresh(); } };
+  xhr.onerror=()=>{ box.innerHTML='❌ сеть/сервер оборвались — попробуй снова'; };
+  box.innerHTML='⬆ загрузка началась — не закрывай вкладку...';
+  xhr.send(fd);
 }
 async function saveStats(cid){
   const vv=parseInt($('v-'+cid).value,10);
