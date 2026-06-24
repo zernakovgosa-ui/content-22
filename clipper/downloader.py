@@ -673,7 +673,7 @@ def _via_ytdlp(url: str, dest_dir: Path, settings: Dict[str, Any],
 
 
 def _via_tgbot(url: str, dest_dir: Path, settings: Dict[str, Any],
-               progress_cb=None) -> Optional[Dict[str, Any]]:
+               progress_cb=None, should_cancel=None) -> Optional[Dict[str, Any]]:
     """Скачать через Telegram-бота (@AndyVideoBot и т.п.). Бот качает ролик на СВОЕЙ
     инфраструктуре (обходит возрастной гейт 18+ и гео-замок) и присылает готовый файл
     в Telegram — мы забираем его userbot-сессией. Длинные ролики бот шлёт частями —
@@ -701,6 +701,8 @@ def _via_tgbot(url: str, dest_dir: Path, settings: Dict[str, Any],
             t0 = time.time()
             while time.time() - t0 < 100 and not qmsg:
                 await asyncio.sleep(3)
+                if should_cancel and should_cancel():
+                    raise RuntimeError("отменено пользователем")
                 for m in await c.get_messages(bot, limit=6):
                     if m.out:
                         continue
@@ -730,6 +732,8 @@ def _via_tgbot(url: str, dest_dir: Path, settings: Dict[str, Any],
             idle = 0
             while time.time() - t0 < 1500:        # до 25 мин (длинные + аплоад бота)
                 await asyncio.sleep(5)
+                if should_cancel and should_cancel():
+                    raise RuntimeError("отменено пользователем")
                 new = False
                 for m in reversed(await c.get_messages(bot, limit=12)):
                     if m.id <= last or m.out:
@@ -846,7 +850,10 @@ def download_youtube(url: str, dest_dir: str | Path, progress_cb=None,
             if not fn:
                 continue
             print(f"[clipper] пробую метод: {method}", flush=True)
-            res = fn(url, dest_dir, settings, progress_cb)
+            if method == "tgbot":
+                res = _via_tgbot(url, dest_dir, settings, progress_cb, should_cancel=should_cancel)
+            else:
+                res = fn(url, dest_dir, settings, progress_cb)
             if res:
                 return res
             print(f"[clipper] метод {method} не дал результата, дальше", flush=True)
