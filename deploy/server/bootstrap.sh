@@ -52,8 +52,8 @@ python3 -m venv .venv
 ./.venv/bin/pip install --upgrade pip -q
 ./.venv/bin/pip install -q fastapi==0.115.0 "uvicorn[standard]==0.30.6" pydantic==2.9.2 \
     python-dotenv==1.0.1 "pillow>=11" imageio-ffmpeg opencv-python-headless yt-dlp \
-    rapidocr-onnxruntime python-multipart \
-    bgutil-ytdlp-pot-provider yt-dlp-ejs   # OCR(блюр) + аплоад музыки + poToken + nsig
+    rapidocr-onnxruntime python-multipart telethon \
+    bgutil-ytdlp-pot-provider yt-dlp-ejs   # OCR + аплоад + telethon(бот-качалка) + poToken
 
 echo "==> [6b/10] poToken (bgutil docker) + nsig (Deno) — yt-dlp качает YouTube НАПРЯМУЮ"
 # bgutil: HTTP-сервер генерит poToken (botguard) для yt-dlp на :4416

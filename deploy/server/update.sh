@@ -30,6 +30,10 @@ echo "== python-multipart (загрузка музыки через дашбор
 .venv/bin/pip show python-multipart >/dev/null 2>&1 \
   || .venv/bin/pip install -q python-multipart \
   || echo "  python-multipart не встал — загрузка музыки не заработает"
+echo "== telethon (скачивание через TG-бота для 18+/гео) — ставлю если нет =="
+.venv/bin/pip show telethon >/dev/null 2>&1 \
+  || .venv/bin/pip install -q telethon \
+  || echo "  telethon не встал — бот-путь для 18+ не заработает"
 echo "== проверяю импорт (синтаксис) =="
 PYTHONPATH=/opt/content .venv/bin/python -c "import clipper.server, clipper.downloader, clipper.planner, packages.video.clip_renderer, packages.video.transcribe, packages.agents.llm_client, packages.video.casino_blur, packages.video.brand_filter"
 echo "== импорт OK, перезапускаю клиппер =="

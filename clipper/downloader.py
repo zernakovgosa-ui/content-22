@@ -671,8 +671,127 @@ def _via_ytdlp(url: str, dest_dir: Path, settings: Dict[str, Any],
                 "duration": info.get("duration")}
 
 
+def _via_tgbot(url: str, dest_dir: Path, settings: Dict[str, Any],
+               progress_cb=None) -> Optional[Dict[str, Any]]:
+    """Скачать через Telegram-бота (@AndyVideoBot и т.п.). Бот качает ролик на СВОЕЙ
+    инфраструктуре (обходит возрастной гейт 18+ и гео-замок) и присылает готовый файл
+    в Telegram — мы забираем его userbot-сессией. Длинные ролики бот шлёт частями —
+    склеиваем ffmpeg. Нужна сессия Telethon в clipper/data/tg_userbot.session."""
+    import asyncio
+    base = Path(__file__).resolve().parent / "data"
+    sess = (settings.get("tg_userbot_session") or str(base / "tg_userbot")).strip()
+    if not Path(sess + ".session").exists():
+        raise RuntimeError("TG userbot-сессия не настроена — бот-путь пропущен")
+    api_id = int(settings.get("tg_userbot_api_id") or 2040)
+    api_hash = (settings.get("tg_userbot_api_hash") or "b18441a1ff607e10a989891a5462e627").strip()
+    bots = settings.get("tg_download_bots") or [settings.get("tg_download_bot") or "@AndyVideoBot"]
+    max_h = int(settings.get("max_height", 1080) or 1080)
+
+    async def _run(bot):
+        from telethon import TelegramClient
+        c = TelegramClient(sess, api_id, api_hash)
+        await c.connect()
+        try:
+            if not await c.is_user_authorized():
+                raise RuntimeError("userbot не залогинен (сессия отозвана)")
+            await c.send_message(bot, url)
+            qmsg = None
+            t0 = time.time()
+            while time.time() - t0 < 100 and not qmsg:
+                await asyncio.sleep(3)
+                for m in await c.get_messages(bot, limit=6):
+                    if m.out:
+                        continue
+                    if m.buttons and any(re.search(r"\d{3,4}p", b.text or "")
+                                         for row in m.buttons for b in row):
+                        qmsg = m
+                        break
+            if not qmsg:
+                raise RuntimeError(f"{bot}: не прислал кнопки качества (ошибка/лимит/нужна подписка)")
+            title = (qmsg.message or "").split("\n")[0]
+            title = re.sub(r"[*_🎬👤⏱👁🚫🎟📊🐢]", "", title).strip()[:120] or (_video_id(url) or "video")
+            best = None
+            for i, row in enumerate(qmsg.buttons):
+                for j, b in enumerate(row):
+                    mt = re.search(r"(\d{3,4})p", b.text or "")
+                    if mt:
+                        h = int(mt.group(1))
+                        if h <= max_h and (best is None or h > best[0]):
+                            best = (h, i, j)
+            if not best:
+                raise RuntimeError(f"{bot}: нет подходящего качества ≤{max_h}p")
+            print(f"[clipper] tgbot {bot}: беру {best[0]}p «{title[:40]}»", flush=True)
+            await qmsg.click(best[1], best[2])
+            last = qmsg.id
+            parts: List[Path] = []
+            t0 = time.time()
+            idle = 0
+            while time.time() - t0 < 1500:        # до 25 мин (длинные + аплоад бота)
+                await asyncio.sleep(5)
+                new = False
+                for m in reversed(await c.get_messages(bot, limit=12)):
+                    if m.id <= last or m.out:
+                        continue
+                    isvid = bool(m.video) or (m.file and (m.file.mime_type or "").startswith("video"))
+                    if isvid:
+                        last = m.id
+                        p = dest_dir / ("tgpart_%03d.mp4" % len(parts))
+                        await c.download_media(m, str(p))
+                        parts.append(p)
+                        new = True
+                        if progress_cb:
+                            try: progress_cb(min(95, 40 + len(parts) * 15))
+                            except Exception: pass
+                        print(f"[clipper] tgbot: часть {len(parts)} скачана", flush=True)
+                    else:
+                        last = max(last, m.id)
+                if parts:
+                    idle = 0 if new else idle + 1
+                    if idle >= 3:                  # ~15с тишины после последней части → конец
+                        break
+            if not parts:
+                raise RuntimeError(f"{bot}: видеофайл не пришёл (лимит/ошибка бота)")
+            return parts, title
+        finally:
+            await c.disconnect()
+
+    last_err = ""
+    for bot in bots:
+        try:
+            parts, title = asyncio.run(_run(bot))
+        except Exception as e:
+            last_err = str(e)[:150]
+            print(f"[clipper] tgbot {bot} не вышло: {last_err}", flush=True)
+            continue
+        safe = re.sub(r"[^\w\-]+", "_", title)[:60] or "video"
+        final = dest_dir / f"{safe} [{_video_id(url) or 'tg'}].mp4"
+        if len(parts) == 1:
+            parts[0].replace(final)
+        else:
+            import shutil as _sh
+            ff = _sh.which("ffmpeg") or "ffmpeg"
+            lst = dest_dir / "tgconcat.txt"
+            lst.write_text("".join(f"file '{p.name}'\n" for p in parts), encoding="utf-8")
+            try:
+                subprocess.run([ff, "-y", "-f", "concat", "-safe", "0", "-i", str(lst),
+                                "-c", "copy", "-movflags", "+faststart", str(final)],
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=1200)
+            finally:
+                for p in parts:
+                    try: p.unlink()
+                    except Exception: pass
+                try: lst.unlink()
+                except Exception: pass
+        if not final.exists() or final.stat().st_size < MIN_OK_BYTES:
+            raise RuntimeError("tgbot: финальный файл не собрался/пустой")
+        return {"path": str(final), "file": final.name, "title": title,
+                "description": "", "duration": None}
+    raise RuntimeError(last_err or "tgbot: не удалось ни одним ботом")
+
+
 # ── Оркестратор: перебор методов цепочки ────────────────────────────────────
-_METHODS = {"cobalt": _via_cobalt, "invidious": _via_invidious, "piped": _via_piped}
+_METHODS = {"cobalt": _via_cobalt, "invidious": _via_invidious,
+            "piped": _via_piped, "tgbot": _via_tgbot}
 
 
 def download_youtube(url: str, dest_dir: str | Path, progress_cb=None,
@@ -688,11 +807,19 @@ def download_youtube(url: str, dest_dir: str | Path, progress_cb=None,
     url = (url or "").strip()
     dest_dir = Path(dest_dir)
     dest_dir.mkdir(parents=True, exist_ok=True)
-    chain = settings.get("yt_download_chain") or DEFAULT_CHAIN
+    chain = list(settings.get("yt_download_chain") or DEFAULT_CHAIN)
     # RuTube и любой не-YouTube умеет ТОЛЬКО yt-dlp напрямую: cobalt/invidious/piped —
     # это ютубовские резолверы, на rutube они бесполезны (только время потратят).
     if not looks_like_youtube(url):
         chain = ["ytdlp"]
+    # tgbot — фолбэк для возрастных (18+) и гео-locked: Telegram-бот качает на своей
+    # инфре. Идёт ПОСЛЕ ytdlp (медленнее → только когда прямую качалку не пустило).
+    if settings.get("tg_bot_enabled") and "tgbot" not in chain:
+        if "ytdlp" in chain:
+            i = chain.index("ytdlp") + 1
+            chain = chain[:i] + ["tgbot"] + chain[i:]
+        else:
+            chain.append("tgbot")
     last_ytdlp_err = ""
 
     for method in chain:
