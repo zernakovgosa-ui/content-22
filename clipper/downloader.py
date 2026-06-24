@@ -618,6 +618,11 @@ def _via_ytdlp(url: str, dest_dir: Path, settings: Dict[str, Any],
     # остаётся прямым/быстрым — для него прокси из РФ только замедлит.
     if looks_like_rutube(url) and (settings.get("rutube_proxy") or "").strip():
         proxy = settings["rutube_proxy"].strip()
+    # youtube_proxy — для 18+: cookies с датацентр-IP Google убивает за минуты, а через
+    # residential/мобильный IP сессия живёт. Применяем ТОЛЬКО к YouTube (обычные ролики
+    # и так качаются напрямую — прокси нужен лишь чтобы возрастные cookies не протухали).
+    elif looks_like_youtube(url) and (settings.get("youtube_proxy") or "").strip():
+        proxy = settings["youtube_proxy"].strip()
     if proxy:
         opts["proxy"] = proxy
     # cookies для ВОЗРАСТНЫХ/закрытых роликов: YouTube не отдаёт 18+ без логина
