@@ -925,10 +925,13 @@ def render_clips(
     job_dir: str | Path,
     settings: Optional[Dict[str, Any]] = None,
     meta: Optional[Dict[str, Any]] = None,
+    should_cancel=None,
 ) -> Dict[str, Any]:
     """Render N clips from source_path into job_dir. Raises RuntimeError only if
     ffmpeg is missing or the source is unreadable; individual clip failures are
-    skipped so the job still succeeds with whatever rendered."""
+    skipped so the job still succeeds with whatever rendered.
+    should_cancel() — опциональный колбэк: если вернёт True, недонарезанные клипы
+    пропускаются (отмена работает и во время рендера, а не только скачивания)."""
     settings = settings or {}
     meta = meta or {}
     transcript = transcript or {"segments": [], "words": []}
@@ -966,6 +969,8 @@ def render_clips(
     src_has_audio = _has_audio(ffmpeg, source_path)
 
     def _do_moment(i: int, m: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        if should_cancel and should_cancel():   # отмена на лету — не начинаем новый клип
+            return None
         try:
             start = float(m.get("start", 0.0))
             end = float(m.get("end", 0.0))

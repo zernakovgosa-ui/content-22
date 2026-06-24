@@ -467,7 +467,10 @@ def _process_video(item: Dict[str, Any]) -> None:
                        "bg_music_volume": float(_load_state().get(
                            "bg_music_volume", settings.get("bg_music_volume", 0.12)) or 0.12)}
     res = render_clips(src, moments, transcript, job_dir, render_settings,
-                       meta={"topic": src.stem, "hashtags": [], "category": item["category"]})
+                       meta={"topic": src.stem, "hashtags": [], "category": item["category"]},
+                       should_cancel=lambda: item.get("id") in _CANCEL)
+    if item.get("id") in _CANCEL:               # отменили во время рендера → бросаем,
+        raise RuntimeError("отменено пользователем")   # воркер вызовет _finish_cancel
 
     token, chat = _tg_creds()
     st = _load_state()
