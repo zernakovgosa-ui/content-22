@@ -1615,54 +1615,6 @@ def download(body: DownloadIn):
     return {"ok": True}
 
 
-_VIDEO_EXTS = (".mp4", ".mkv", ".webm", ".mov", ".m4v", ".avi", ".ts", ".flv")
-
-
-@app.post("/source/upload")
-async def source_upload(file: UploadFile = File(...), category: str = Form(...),
-                        music: str = Form("false")):
-    """Загрузить ВИДЕО-источник → sources/<категория> → очередь нарезки. Для 18+/гео-
-    locked: качаешь у себя на ПК (там играет), грузишь файлом — обходит куки/гео-замок."""
-    cat = (category or "").strip()
-    if cat not in CAT_FOLDER:
-        return JSONResponse({"error": "неизвестная категория"}, status_code=400)
-    raw = os.path.basename((file.filename or "").strip())
-    ext = os.path.splitext(raw)[1].lower()
-    if ext not in _VIDEO_EXTS:
-        return JSONResponse({"error": "только видео: mp4/mkv/webm/mov/m4v/avi/ts/flv"}, status_code=400)
-    safe = re.sub(r"[^\w.\-]+", "_", raw)[:120] or ("video" + ext)
-    if not safe.lower().endswith(ext):
-        safe += ext
-    dest_dir = SOURCES_DIR / CAT_FOLDER[cat]
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    dest = dest_dir / safe
-    total = 0
-    try:                                  # стримим на диск чанками — фильм может быть в гигабайтах
-        with open(dest, "wb") as out:
-            while True:
-                chunk = await file.read(1024 * 1024)
-                if not chunk:
-                    break
-                out.write(chunk)
-                total += len(chunk)
-    except Exception as e:
-        try: dest.unlink()
-        except Exception: pass
-        return JSONResponse({"error": f"запись не удалась: {str(e)[:100]}"}, status_code=500)
-    if total < 10 * 1024:
-        try: dest.unlink()
-        except Exception: pass
-        return JSONResponse({"error": "файл пустой/битый"}, status_code=400)
-    music_on = str(music).lower() in ("true", "1", "on", "yes")
-    with _LOCK:
-        st = _load_state()
-        st["queue"].append({"id": uuid.uuid4().hex[:8], "file": safe,
-                            "category": cat, "status": "pending", "music": music_on,
-                            "added": datetime.now().isoformat(timespec="seconds")})
-        _save_state()
-    return {"ok": True, "file": safe, "size_mb": round(total / 1024 / 1024, 1)}
-
-
 class MusicDelIn(BaseModel):
     category: str = "common"
     name: str
