@@ -714,7 +714,17 @@ def _handle_callback(cb: Dict[str, Any], token: str, chat: str) -> None:
                     answer = "❌ Отклонён"
                 _save_state()
             else:
-                answer = "Уже обработан"
+                # уже обработан ранее ИЛИ дубль callback'а — показываем реальный статус,
+                # а не пугающее «Уже обработан» (клип мог давно одобриться/уйти в план).
+                if clip and clip.get("status") == "approved":
+                    sched = next((p for p in st["plan"]
+                                  if p.get("clip_id") == clip_id and p.get("status") == "scheduled"), None)
+                    answer = (f"✅ Уже одобрен — в плане {sched.get('date')} {sched.get('slot')}"
+                              if sched else "✅ Уже одобрен (в план встанет, как будет аккаунт под категорию)")
+                elif clip and clip.get("status") == "rejected":
+                    answer = "❌ Уже отклонён"
+                else:
+                    answer = "⚠️ Карточка устарела — клип не найден (старый сервер/пере-нарезка)"
         if do_copy and do_copy[0]:        # копируем ВНЕ лока (IO не держит другие потоки)
             try:
                 dst = _approved_dir(do_copy[1]) / Path(do_copy[0]).name
