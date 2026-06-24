@@ -679,6 +679,7 @@ def _via_tgbot(url: str, dest_dir: Path, settings: Dict[str, Any],
     в Telegram — мы забираем его userbot-сессией. Длинные ролики бот шлёт частями —
     склеиваем ffmpeg. Нужна сессия Telethon в clipper/data/tg_userbot.session."""
     import asyncio
+    import fcntl
     base = Path(__file__).resolve().parent / "data"
     sess = (settings.get("tg_userbot_session") or str(base / "tg_userbot")).strip()
     if not Path(sess + ".session").exists():
@@ -756,10 +757,22 @@ def _via_tgbot(url: str, dest_dir: Path, settings: Dict[str, Any],
         finally:
             await c.disconnect()
 
+    def _locked_run(b):
+        # сериализуем доступ к Telethon-сессии (SQLite): иначе параллельные вызовы
+        # (две закачки сразу / тест + воркер) дают «database is locked».
+        lf = open(sess + ".lock", "w")
+        try:
+            fcntl.flock(lf, fcntl.LOCK_EX)
+            return asyncio.run(_run(b))
+        finally:
+            try: fcntl.flock(lf, fcntl.LOCK_UN)
+            except Exception: pass
+            lf.close()
+
     last_err = ""
     for bot in bots:
         try:
-            parts, title = asyncio.run(_run(bot))
+            parts, title = _locked_run(bot)
         except Exception as e:
             last_err = str(e)[:150]
             print(f"[clipper] tgbot {bot} не вышло: {last_err}", flush=True)
