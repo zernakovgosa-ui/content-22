@@ -698,20 +698,28 @@ def _via_tgbot(url: str, dest_dir: Path, settings: Dict[str, Any],
                 raise RuntimeError("userbot не залогинен (сессия отозвана)")
             await c.send_message(bot, url)
             qmsg = None
+            limit_hit = False
             t0 = time.time()
-            while time.time() - t0 < 100 and not qmsg:
+            while time.time() - t0 < 100 and not qmsg and not limit_hit:
                 await asyncio.sleep(3)
                 if should_cancel and should_cancel():
                     raise RuntimeError("отменено пользователем")
                 for m in await c.get_messages(bot, limit=6):
                     if m.out:
                         continue
+                    low = (m.message or "").lower()
+                    if any(k in low for k in ("лимит исчерпан", "daily limit", "limit reached",
+                                              "лимит сброс", "out of downloads")):
+                        limit_hit = True            # дневной лимит бота → сразу к следующему
+                        break
                     if m.buttons and any(re.search(r"\d{3,4}p", b.text or "")
                                          for row in m.buttons for b in row):
                         qmsg = m
                         break
+            if limit_hit:
+                raise RuntimeError(f"{bot}: дневной лимит бесплатного тарифа исчерпан (сброс в 00:00 UTC)")
             if not qmsg:
-                raise RuntimeError(f"{bot}: не прислал кнопки качества (ошибка/лимит/нужна подписка)")
+                raise RuntimeError(f"{bot}: не прислал кнопки качества (занят/ошибка)")
             title = (qmsg.message or "").split("\n")[0]
             title = re.sub(r"[*_🎬👤⏱👁🚫🎟📊🐢]", "", title).strip()[:120] or (_video_id(url) or "video")
             best = None
